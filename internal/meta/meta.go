@@ -15,19 +15,21 @@ import (
 // from values set to empty strings in the YAML header. We replace values not
 // set by defaults values when parsing a header.
 type parsedMeta struct {
-	Theme  *string `yaml:"theme"`
-	Author *string `yaml:"author"`
-	Date   *string `yaml:"date"`
-	Paging *string `yaml:"paging"`
+	Theme        *string `yaml:"theme"`
+	Author       *string `yaml:"author"`
+	Date         *string `yaml:"date"`
+	Paging       *string `yaml:"paging"`
+	Bibliography *string `yaml:"bibliography"`
 }
 
 // Meta contains all of the data to be parsed
 // out of a markdown file's header section
 type Meta struct {
-	Theme  string
-	Author string
-	Date   string
-	Paging string
+	Theme        string
+	Author       string
+	Date         string
+	Paging       string
+	Bibliography string
 }
 
 // New creates a new instance of the
@@ -82,6 +84,10 @@ func (m *Meta) Parse(header string) (*Meta, bool) {
 		m.Paging = *tmp.Paging
 	} else {
 		m.Paging = fallback.Paging
+	}
+
+	if tmp.Bibliography != nil {
+		m.Bibliography = *tmp.Bibliography
 	}
 
 	return m, true

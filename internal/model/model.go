@@ -21,6 +21,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/maaslalani/slides/internal/bib"
 	"github.com/maaslalani/slides/internal/code"
 	"github.com/maaslalani/slides/internal/image"
 	"github.com/maaslalani/slides/internal/latex"
@@ -182,6 +183,11 @@ func (m *Model) Load() error {
 	}
 	if m.images == nil {
 		m.images = image.NewCache()
+	}
+	if metaData.Bibliography != "" {
+		if entries, err := bib.ParseFile(filepath.Join(m.imageBaseDir(), metaData.Bibliography)); err == nil {
+			m.Slides = bib.Process(m.Slides, entries)
+		}
 	}
 
 	return nil

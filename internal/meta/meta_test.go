@@ -159,6 +159,27 @@ func TestMeta_ParseHeader(t *testing.T) {
 				Paging: "Slide %d / %d",
 			},
 		},
+		{
+			name:      "Parse bibliography from header",
+			slideshow: fmt.Sprintf("---\nbibliography: %q\n", "refs.bib"),
+			want: &meta.Meta{
+				Theme:        "default",
+				Author:       user.Name,
+				Date:         date,
+				Paging:       "Slide %d / %d",
+				Bibliography: "refs.bib",
+			},
+		},
+		{
+			name:      "Fallback to empty if no bibliography provided",
+			slideshow: "\n# Header Slide\n > Subtitle\n",
+			want: &meta.Meta{
+				Theme:  "default",
+				Author: user.Name,
+				Date:   date,
+				Paging: "Slide %d / %d",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
