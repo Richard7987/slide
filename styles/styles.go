@@ -50,10 +50,36 @@ func JoinHorizontal(left, right string, width int) string {
 	return lipgloss.PlaceHorizontal(w, lipgloss.Left, left) + right
 }
 
-// JoinVertical joins two strings vertically and fills the space in-between.
+// JoinVertical joins two strings vertically and fills the space in-between,
+// centering top within it rather than pinning it to the first line -- on
+// a tall terminal, a short slide otherwise reads as stranded at the top
+// with a large dead gap below it.
+//
+// top is always clipped to at most height-lipgloss.Height(bottom) lines:
+// PlaceVertical is a no-op when its content is already taller than the
+// requested height, so without this, bottom (the status bar) would drift
+// away from the last line whenever top overflows -- which becomes more
+// likely the smaller the viewport gets, e.g. after zooming in.
+//
+// The concatenation below relies on top's own last line being blank: with
+// no room left to spare, that's where bottom's leading (padding) line
+// merges in. When clipping kicks in, the last surviving line is real
+// content instead, so it's swapped for an explicit blank one to keep
+// that seam clean rather than smushing text into the status bar.
 func JoinVertical(top, bottom string, height int) string {
 	h := height - lipgloss.Height(bottom)
-	return lipgloss.PlaceVertical(h, lipgloss.Top, top) + bottom
+	if h < 0 {
+		h = 0
+	}
+	placed := lipgloss.PlaceVertical(h, lipgloss.Center, top)
+	if lines := strings.Split(placed, "\n"); len(lines) > h {
+		keep := h - 1
+		if keep < 0 {
+			keep = 0
+		}
+		placed = strings.Join(append(lines[:keep], ""), "\n")
+	}
+	return placed + bottom
 }
 
 // SelectTheme picks a glamour style config based

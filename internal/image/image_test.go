@@ -67,7 +67,7 @@ func TestPreprocessAndExpand(t *testing.T) {
 		return image.Entry{}, false
 	}
 
-	pre, placements := image.Preprocess(md, lookup)
+	pre, placements := image.Preprocess(md, "loading…", lookup)
 	require.Len(t, placements, 1)
 	assert.Equal(t, image.Entry{ID: 5, Cols: 10, Rows: 3}, placements[0].Entry)
 	assert.NotContains(t, pre, "![a chart]")
@@ -83,11 +83,20 @@ func TestPreprocessAndExpand(t *testing.T) {
 	assert.Equal(t, 3, placeholderLines)
 }
 
-func TestPreprocess_SkipsUnresolvedRefs(t *testing.T) {
+func TestPreprocess_UnresolvedRefsGetLoadingText(t *testing.T) {
 	md := "![missing](nope.png)"
-	pre, placements := image.Preprocess(md, func(image.Ref) (image.Entry, bool) {
+	pre, placements := image.Preprocess(md, "loading…", func(image.Ref) (image.Entry, bool) {
 		return image.Entry{}, false
 	})
-	assert.Equal(t, md, pre)
+	assert.Equal(t, "loading…", pre)
+	assert.Empty(t, placements)
+}
+
+func TestPreprocess_UnresolvedRefWithCaptionKeepsCaption(t *testing.T) {
+	md := `![missing](nope.png "Figure 1")`
+	pre, placements := image.Preprocess(md, "loading…", func(image.Ref) (image.Entry, bool) {
+		return image.Entry{}, false
+	})
+	assert.Equal(t, "loading…\n\n*Figure 1*", pre)
 	assert.Empty(t, placements)
 }

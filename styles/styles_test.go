@@ -1,6 +1,7 @@
 package styles_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/glamour"
@@ -9,6 +10,41 @@ import (
 	"github.com/maaslalani/slides/styles"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestJoinVertical_ZeroHeightDoesNotPanic(t *testing.T) {
+	// Regression: the very first render can happen before the initial
+	// tea.WindowSizeMsg arrives, with height still 0 -- must not panic.
+	assert.NotPanics(t, func() {
+		styles.JoinVertical("slide content\nmore lines", "status", 0)
+	})
+}
+
+func TestJoinVertical_BottomTallerThanHeightDoesNotPanic(t *testing.T) {
+	assert.NotPanics(t, func() {
+		styles.JoinVertical("top", "line1\nline2\nline3", 1)
+	})
+}
+
+func TestJoinVertical_ClipsOverflowingTop(t *testing.T) {
+	top := "1\n2\n3\n4\n5"
+	got := styles.JoinVertical(top, "status", 3)
+	// height=3, bottom is 1 line -> top's budget is 2 lines; the last of
+	// those is swapped for a blank one so bottom merges into it cleanly
+	// instead of appending onto real content ("2status").
+	assert.Equal(t, "1\nstatus", got)
+}
+
+func TestJoinVertical_ClipsOverflowingTop_PaddedBottomStaysClean(t *testing.T) {
+	// bottom shaped like the real status bar: Padding(1) gives it a
+	// blank line above and below its actual content.
+	top := "1\n2\n3\n4\n5"
+	bottom := " \nSTATUS\n "
+	got := styles.JoinVertical(top, bottom, 5)
+	assert.Equal(t, "1\n \nSTATUS\n ", got)
+	for _, line := range strings.Split(got, "\n") {
+		assert.NotContains(t, line, "2STATUS", "clipped content must not merge into status text")
+	}
+}
 
 func TestSelectTheme(t *testing.T) {
 	tests := []struct {

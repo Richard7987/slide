@@ -18,25 +18,26 @@ func TestPreprocess_DisplayBecomesImage(t *testing.T) {
 		return image.Entry{ID: 3, Cols: 5, Rows: 2}, true
 	}
 
-	pre, placements := latex.Preprocess(md, true, true, lookup)
+	pre, placements := latex.Preprocess(md, true, true, "loading…", lookup)
 	require.Len(t, placements, 1)
 	assert.Equal(t, image.Entry{ID: 3, Cols: 5, Rows: 2}, placements[0].Entry)
 	assert.NotContains(t, pre, "$$")
 	assert.Contains(t, pre, "α")
 }
 
-func TestPreprocess_FallsBackToUnicodeWhenNotReady(t *testing.T) {
+func TestPreprocess_ShowsLoadingWhenGraphicsOKButNotReady(t *testing.T) {
 	md := "$$ x^2 $$"
-	pre, placements := latex.Preprocess(md, true, true, func(string) (image.Entry, bool) {
+	pre, placements := latex.Preprocess(md, true, true, "loading…", func(string) (image.Entry, bool) {
 		return image.Entry{}, false
 	})
 	assert.Empty(t, placements)
-	assert.Contains(t, pre, "x²")
+	assert.Contains(t, pre, "loading…")
+	assert.NotContains(t, pre, "x²", "should show the loading indicator, not fall through to unicode")
 }
 
 func TestPreprocess_FallsBackToUnicodeWithoutGraphics(t *testing.T) {
 	md := "$$ x^2 $$"
-	pre, placements := latex.Preprocess(md, true, false, func(string) (image.Entry, bool) {
+	pre, placements := latex.Preprocess(md, true, false, "loading…", func(string) (image.Entry, bool) {
 		t.Fatal("lookup should not be called when graphicsOK is false")
 		return image.Entry{}, false
 	})
@@ -46,7 +47,7 @@ func TestPreprocess_FallsBackToUnicodeWithoutGraphics(t *testing.T) {
 
 func TestExpand(t *testing.T) {
 	md := "$$ x^2 $$"
-	pre, placements := latex.Preprocess(md, true, true, func(string) (image.Entry, bool) {
+	pre, placements := latex.Preprocess(md, true, true, "loading…", func(string) (image.Entry, bool) {
 		return image.Entry{ID: 1, Cols: 4, Rows: 3}, true
 	})
 

@@ -49,15 +49,22 @@ func sentinel(index int) string {
 
 // Preprocess replaces each image reference whose cache entry is already
 // resolved (lookup returns ok) with a sentinel line, plus a caption
-// paragraph if present. References not yet resolved are left untouched, so
-// glamour falls back to its default "Image: alt -> src" rendering until
-// they become ready. The returned placements are indexed exactly as the
-// sentinels appear, for Expand to consume after markdown rendering.
-func Preprocess(markdown string, lookup func(Ref) (Entry, bool)) (string, []Placement) {
+// paragraph if present. References not yet resolved get loading (e.g. a
+// spinner frame) instead, plus the caption if any -- callers only reach
+// here once they already know graphics are supported, so "not ready" only
+// ever means "still decoding", never "never will". The returned
+// placements are indexed exactly as the sentinels appear, for Expand to
+// consume after markdown rendering.
+func Preprocess(markdown, loading string, lookup func(Ref) (Entry, bool)) (string, []Placement) {
 	var placements []Placement
 	for _, ref := range Parse(markdown) {
 		entry, ok := lookup(ref)
 		if !ok {
+			fallback := loading
+			if ref.Caption != "" {
+				fallback += "\n\n*" + ref.Caption + "*"
+			}
+			markdown = strings.Replace(markdown, ref.Raw, fallback, 1)
 			continue
 		}
 		replacement := sentinel(len(placements))
@@ -91,7 +98,10 @@ func Expand(rendered string, placements []Placement) string {
 			continue
 		}
 		e := placements[idx].Entry
-		out = append(out, strings.Split(PlaceholderBlock(e.ID, e.Cols, e.Rows), "\n")...)
+		pad := strings.Repeat(" ", e.PadLeft)
+		for _, row := range strings.Split(PlaceholderBlock(e.ID, e.Cols, e.Rows), "\n") {
+			out = append(out, pad+row)
+		}
 	}
 	return strings.Join(out, "\n")
 }

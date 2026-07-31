@@ -19,14 +19,16 @@
     "bold": true
   },
   "h1": {
-    "prefix": "██ ",
-    "suffix": " ",
-    "color": "#9fc",
+    "prefix": "  ",
+    "suffix": "  ",
+    "color": "#111",
+    "background_color": "#9fc",
     "bold": true
   },
   "h2": {
     "prefix": "▓▓▓ ",
-    "color": "#1cc"
+    "color": "#1cc",
+    "bold": true
   },
   "h3": {
     "prefix": "▒▒▒▒ ",

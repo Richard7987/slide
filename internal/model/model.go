@@ -16,6 +16,7 @@ import (
 	"github.com/maaslalani/slides/internal/navigation"
 	"github.com/maaslalani/slides/internal/process"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -60,6 +61,7 @@ type Model struct {
 	images     *image.Cache
 	graphicsOK bool
 	darkBG     bool
+	spinner    spinner.Model
 }
 
 type fileWatchMsg struct{}
@@ -74,7 +76,7 @@ var fileInfo os.FileInfo
 // if it exists, and probes whether the terminal supports the Kitty
 // graphics protocol.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.Raw(image.ProbeSeq())}
+	cmds := []tea.Cmd{tea.Raw(image.ProbeSeq()), m.spinner.Tick}
 	if m.FileName != "" {
 		fileInfo, _ = os.Stat(m.FileName)
 		cmds = append(cmds, fileWatchCmd())
@@ -91,11 +93,65 @@ func (m *Model) imageBaseDir() string {
 	return filepath.Dir(m.FileName)
 }
 
+// presentation margin reserved on each side of the viewport, so slides
+// (text, images, everything) never run edge-to-edge.
+const hMarginFrac = 0.04
+const vMarginFrac = 0.03
+
+// contentSize returns the viewport size minus the presentation margin --
+// the width/height everything on the slide is laid out within.
+func (m *Model) contentSize() (width, height int) {
+	width = m.viewport.Width() - 2*int(float64(m.viewport.Width())*hMarginFrac)
+	height = m.viewport.Height() - 2*int(float64(m.viewport.Height())*vMarginFrac)
+	if width < 1 {
+		width = m.viewport.Width()
+	}
+	if height < 1 {
+		height = m.viewport.Height()
+	}
+	return width, height
+}
+
+// leftMargin is how many columns to indent the whole rendered slide by.
+// Since its content is contentSize()-wide, this centers it in the
+// viewport, giving an equal margin on both sides.
+func (m *Model) leftMargin() int {
+	contentWidth, _ := m.contentSize()
+	margin := (m.viewport.Width() - contentWidth) / 2
+	if margin < 0 {
+		return 0
+	}
+	return margin
+}
+
+// reservedRows is a fixed allowance for whatever text shares the slide
+// with a figure -- title, intro sentence, caption, status bar. A fixed
+// row count holds up better than a fraction of the viewport once the
+// viewport gets small (zooming in shrinks the cell grid), where a
+// percentage-based cut stops leaving enough room for fixed-size text.
+// It's still just a budget: a slide that also stacks a full table (or
+// more) alongside the figure can still run past it -- JoinVertical clips
+// the overflow so the status bar never drifts, but the figure itself may
+// get visually cut off. Splitting such a slide in two is the real fix.
+const reservedRows = 10
+
+// mediaSize returns the column/row budget for a single image or LaTeX
+// block: images can use the entire content width, while their row budget
+// leaves reservedRows for whatever else is on the slide.
+func (m *Model) mediaSize() (maxCols, maxRows int) {
+	contentWidth, contentHeight := m.contentSize()
+	maxRows = contentHeight - reservedRows
+	if maxRows < 3 {
+		maxRows = 3
+	}
+	return contentWidth, maxRows
+}
+
 // loadImagesCmd decodes and encodes any not-yet-cached images or display
 // math referenced by slide, off the render path. It does file I/O (and,
 // for display math, shells out to tectonic/gs), so it must only run
 // inside a tea.Cmd.
-func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int, darkBG bool) tea.Cmd {
+func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols, maxRows int, darkBG bool) tea.Cmd {
 	refs := image.Parse(slide)
 	display, _ := latex.ParseDisplay(slide)
 	if images == nil || (len(refs) == 0 && len(display) == 0) {
@@ -105,10 +161,10 @@ func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int, dark
 		var seqs []string
 		for _, ref := range refs {
 			path := filepath.Join(baseDir, ref.Src)
-			if _, ok := images.Get(path, maxCols); ok {
+			if _, ok := images.Get(path, maxCols, maxRows); ok {
 				continue
 			}
-			_, seq, err := images.Load(path, maxCols)
+			_, seq, err := images.Load(path, maxCols, maxRows)
 			if err != nil || seq == "" {
 				continue
 			}
@@ -116,14 +172,14 @@ func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int, dark
 		}
 		for _, b := range display {
 			cachePath := latex.CachePath(b.Source, darkBG)
-			if _, ok := images.Get(cachePath, maxCols); ok {
+			if _, ok := images.Get(cachePath, maxCols, maxRows); ok {
 				continue
 			}
 			renderedPath, err := latex.Render(b.Source, darkBG)
 			if err != nil {
 				continue
 			}
-			_, seq, err := images.Load(renderedPath, maxCols)
+			_, seq, err := images.Load(renderedPath, maxCols, maxRows)
 			if err != nil || seq == "" {
 				continue
 			}
@@ -180,6 +236,7 @@ func (m *Model) Load() error {
 		// would race with Bubble Tea's input reader if called later from
 		// a tea.Cmd while the program is running.
 		m.darkBG = termenv.HasDarkBackground()
+		m.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	}
 	if m.images == nil {
 		m.images = image.NewCache()
@@ -202,7 +259,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.graphicsOK || len(m.Slides) == 0 {
 			return m, nil
 		}
-		return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width(), m.darkBG)
+		maxCols, maxRows := m.mediaSize()
+		return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], maxCols, maxRows, m.darkBG)
 
 	case tea.KeyPressMsg:
 		keyPress := msg.String()
@@ -275,18 +333,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.graphicsOK {
 				return m, nil
 			}
-			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width(), m.darkBG)
+			maxCols, maxRows := m.mediaSize()
+			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], maxCols, maxRows, m.darkBG)
 		}
 
 	case uv.KittyGraphicsEvent:
 		if msg.Options.ID == image.ProbeID && string(msg.Payload) == "OK" {
 			m.graphicsOK = true
-			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width(), m.darkBG)
+			maxCols, maxRows := m.mediaSize()
+			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], maxCols, maxRows, m.darkBG)
 		}
 		return m, nil
 
 	case imagesLoadedMsg:
 		return m, tea.Raw(strings.Join(msg.seqs, ""))
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case fileWatchMsg:
 		newFileInfo, err := os.Stat(m.FileName)
@@ -305,23 +370,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the current slide in the presentation and the status bar which
 // contains the author, date, and pagination information.
 func (m Model) View() tea.View {
-	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(m.viewport.Width()))
+	contentWidth, _ := m.contentSize()
+	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(contentWidth))
 	slide := m.Slides[m.Page]
 	slide = code.HideComments(slide)
 
+	maxCols, maxRows := m.mediaSize()
+	spin := m.spinner.View()
+
 	var placements []image.Placement
 	if m.graphicsOK && m.images != nil {
-		baseDir, maxCols := m.imageBaseDir(), m.viewport.Width()
-		slide, placements = image.Preprocess(slide, func(ref image.Ref) (image.Entry, bool) {
-			return m.images.Get(filepath.Join(baseDir, ref.Src), maxCols)
+		baseDir := m.imageBaseDir()
+		slide, placements = image.Preprocess(slide, spin+" cargando imagen…", func(ref image.Ref) (image.Entry, bool) {
+			return m.images.Get(filepath.Join(baseDir, ref.Src), maxCols, maxRows)
 		})
 	}
 
 	var latexPlacements []image.Placement
 	if m.images != nil {
-		maxCols := m.viewport.Width()
-		slide, latexPlacements = latex.Preprocess(slide, m.darkBG, m.graphicsOK, func(path string) (image.Entry, bool) {
-			return m.images.Get(path, maxCols)
+		slide, latexPlacements = latex.Preprocess(slide, m.darkBG, m.graphicsOK, spin+" renderizando fórmula…", func(path string) (image.Entry, bool) {
+			return m.images.Get(path, maxCols, maxRows)
 		})
 	}
 
@@ -337,6 +405,14 @@ func (m Model) View() tea.View {
 	}
 	if len(latexPlacements) > 0 {
 		slide = latex.Expand(slide, latexPlacements)
+	}
+	if margin := m.leftMargin(); margin > 0 {
+		pad := strings.Repeat(" ", margin)
+		lines := strings.Split(slide, "\n")
+		for i := range lines {
+			lines[i] = pad + lines[i]
+		}
+		slide = strings.Join(lines, "\n")
 	}
 
 	var left string

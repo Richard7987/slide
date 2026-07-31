@@ -15,29 +15,23 @@ import (
 // round-trip to the terminal, so v1 uses this fixed assumption.
 const cellWidthOverHeight = 0.5
 
-// defaultMaxCols caps how wide a single image gets by default, so one
-// picture doesn't consume the whole slide width on a very wide terminal.
-const defaultMaxCols = 60
-
-// maxRows caps how tall a single image gets, so a narrow/tall image
-// doesn't consume the whole slide height.
-const maxRows = 20
-
 // Entry is a resolved, ready-to-place image.
 type Entry struct {
-	ID   int
-	Cols int
-	Rows int
+	ID      int
+	Cols    int
+	Rows    int
+	PadLeft int // spaces to prepend to each row, to center it within maxCols
 }
 
 type cacheKey struct {
 	path    string
 	maxCols int
+	maxRows int
 }
 
 // Cache decodes and transmits images over the Kitty Graphics Protocol,
-// keyed by resolved path and target width, and assigns each a stable ID
-// for the process's lifetime.
+// keyed by resolved path and target size budget, and assigns each a
+// stable ID for the process's lifetime.
 type Cache struct {
 	mu      sync.RWMutex
 	entries map[cacheKey]Entry
@@ -48,12 +42,12 @@ func NewCache() *Cache {
 	return &Cache{entries: make(map[cacheKey]Entry), nextID: 1}
 }
 
-// Get returns the entry for path/maxCols if it has already been loaded.
-// It does no I/O and is safe to call from View() on every frame.
-func (c *Cache) Get(path string, maxCols int) (Entry, bool) {
+// Get returns the entry for path/maxCols/maxRows if it has already been
+// loaded. It does no I/O and is safe to call from View() on every frame.
+func (c *Cache) Get(path string, maxCols, maxRows int) (Entry, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	e, ok := c.entries[cacheKey{path, maxCols}]
+	e, ok := c.entries[cacheKey{path, maxCols, maxRows}]
 	return e, ok
 }
 
@@ -62,8 +56,8 @@ func (c *Cache) Get(path string, maxCols int) (Entry, bool) {
 // does file I/O and image decoding, so callers must only invoke it from a
 // tea.Cmd, never from View(). If the entry is already cached, transmitSeq
 // is empty and there is nothing new to send.
-func (c *Cache) Load(path string, maxCols int) (entry Entry, transmitSeq string, err error) {
-	if e, ok := c.Get(path, maxCols); ok {
+func (c *Cache) Load(path string, maxCols, maxRows int) (entry Entry, transmitSeq string, err error) {
+	if e, ok := c.Get(path, maxCols, maxRows); ok {
 		return e, "", nil
 	}
 
@@ -78,13 +72,17 @@ func (c *Cache) Load(path string, maxCols int) (entry Entry, transmitSeq string,
 		return Entry{}, "", err
 	}
 
-	cols, rows := fitSize(img.Bounds(), maxCols)
+	cols, rows := fitSize(img.Bounds(), maxCols, maxRows)
+	padLeft := (maxCols - cols) / 2
+	if padLeft < 0 {
+		padLeft = 0
+	}
 
 	c.mu.Lock()
 	id := c.nextID
 	c.nextID++
-	e := Entry{ID: id, Cols: cols, Rows: rows}
-	c.entries[cacheKey{path, maxCols}] = e
+	e := Entry{ID: id, Cols: cols, Rows: rows, PadLeft: padLeft}
+	c.entries[cacheKey{path, maxCols, maxRows}] = e
 	c.mu.Unlock()
 
 	seq, err := TransmitSeq(img, id, cols, rows)
@@ -95,21 +93,20 @@ func (c *Cache) Load(path string, maxCols int) (entry Entry, transmitSeq string,
 }
 
 // fitSize picks a cols x rows grid that preserves the image's aspect
-// ratio within the column/row caps.
-func fitSize(bounds stdimage.Rectangle, maxCols int) (cols, rows int) {
+// ratio, filling as much of the maxCols x maxRows budget as it can.
+func fitSize(bounds stdimage.Rectangle, maxCols, maxRows int) (cols, rows int) {
 	w, h := bounds.Dx(), bounds.Dy()
 	if w <= 0 || h <= 0 {
 		return 1, 1
 	}
+	if maxCols < 1 {
+		maxCols = 1
+	}
+	if maxRows < 1 {
+		maxRows = 1
+	}
 
 	cols = maxCols
-	if cols > defaultMaxCols {
-		cols = defaultMaxCols
-	}
-	if cols < 1 {
-		cols = 1
-	}
-
 	rows = int(float64(cols) * cellWidthOverHeight * float64(h) / float64(w))
 	if rows > maxRows {
 		rows = maxRows
@@ -120,6 +117,9 @@ func fitSize(bounds stdimage.Rectangle, maxCols int) (cols, rows int) {
 	}
 	if cols < 1 {
 		cols = 1
+	}
+	if cols > maxCols {
+		cols = maxCols
 	}
 	return cols, rows
 }

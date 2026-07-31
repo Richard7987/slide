@@ -22,10 +22,12 @@ func sentinel(i int) string {
 
 // Preprocess finds display ($$...$$) and inline ($...$) math in markdown.
 // Display blocks become a real image (sentinel + placement) when
-// graphicsOK and lookup resolves their cache entry; otherwise -- and
-// always for inline math, which never renders as an image -- they're
-// replaced with a Unicode approximation so they still read as text.
-func Preprocess(markdown string, dark, graphicsOK bool, lookup func(path string) (image.Entry, bool)) (string, []image.Placement) {
+// graphicsOK and lookup resolves their cache entry; when graphics are
+// supported but the entry isn't ready yet, they get loading (e.g. a
+// spinner frame) instead. Without graphics support at all -- and always
+// for inline math, which never renders as an image -- they're replaced
+// with a Unicode approximation so they still read as text.
+func Preprocess(markdown string, dark, graphicsOK bool, loading string, lookup func(path string) (image.Entry, bool)) (string, []image.Placement) {
 	display, masked := ParseDisplay(markdown)
 	inline := ParseInline(masked)
 
@@ -37,6 +39,8 @@ func Preprocess(markdown string, dark, graphicsOK bool, lookup func(path string)
 				placements = append(placements, image.Placement{Entry: entry})
 				continue
 			}
+			markdown = strings.Replace(markdown, b.Raw, loading, 1)
+			continue
 		}
 		markdown = strings.Replace(markdown, b.Raw, ToUnicode(b.Source), 1)
 	}
@@ -66,7 +70,10 @@ func Expand(rendered string, placements []image.Placement) string {
 			continue
 		}
 		e := placements[idx].Entry
-		out = append(out, strings.Split(image.PlaceholderBlock(e.ID, e.Cols, e.Rows), "\n")...)
+		pad := strings.Repeat(" ", e.PadLeft)
+		for _, row := range strings.Split(image.PlaceholderBlock(e.ID, e.Cols, e.Rows), "\n") {
+			out = append(out, pad+row)
+		}
 	}
 	return strings.Join(out, "\n")
 }

@@ -20,6 +20,8 @@ func TestToUnicode(t *testing.T) {
 		{"subscript digit", "x_1", "x₁"},
 		{"subscript group", "a_{ij}", "aᵢⱼ"},
 		{"unmapped superscript falls back to raw char", "x^q", "xq"},
+		{"operator name drops backslash", `\sin(x)`, "sin(x)"},
+		{"operator name in expression", `O(N \log N)`, "O(N log N)"},
 		{"frac simple", `\frac{a}{b}`, "(a)/(b)"},
 		{"frac nested macro", `\frac{\alpha}{2}`, "(α)/(2)"},
 		{"sqrt simple", `\sqrt{x}`, "√(x)"},
@@ -28,6 +30,12 @@ func TestToUnicode(t *testing.T) {
 		{"spacing commands dropped", `a\,b\;c\!d`, "abcd"},
 		{"left right dropped", `\left(x\right)`, "(x)"},
 		{"braces alone are stripped", "{x}", "x"},
+		{"vec accent", `\vec{F}`, "F→"},
+		{"hat accent", `\hat{n}`, "n^"},
+		{"dot accent, no braces", `\dot x`, "x′"},
+		{"ddot accent", `\ddot{x}`, "x″"},
+		{"bar accent", `\bar{v}`, "⟨v⟩"},
+		{"overline multi-letter", `\overline{AB}`, "⟨AB⟩"},
 	}
 
 	for _, tt := range tests {

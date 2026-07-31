@@ -46,6 +46,28 @@ var symbols = map[string]rune{
 	"dots": '…', "ldots": '…', "cdots": '⋯', "vdots": '⋮', "ddots": '⋱',
 }
 
+// operatorNames are macros for named operators/functions (\sin, \log, ...)
+// that are just their name set upright in real LaTeX -- here, that means
+// dropping the backslash and keeping the letters as-is.
+var operatorNames = map[string]bool{
+	"sin": true, "cos": true, "tan": true, "cot": true, "sec": true, "csc": true,
+	"log": true, "ln": true, "exp": true, "lim": true, "sup": true, "inf": true,
+	"min": true, "max": true, "det": true, "gcd": true, "arg": true, "mod": true,
+	"deg": true, "dim": true, "ker": true, "hom": true,
+}
+
+// accentSuffix covers the physics notation combining marks can't:
+// combining-mark glyphs (arrow/hat/dot above) get silently dropped
+// somewhere in slides' own render pipeline (confirmed: they show up fine
+// printed directly to the terminal, but not once routed through
+// glamour/reflow), so these decorate their argument with an ordinary,
+// non-combining suffix character instead -- never as good-looking as a
+// mark sitting directly above the letter, but guaranteed to actually
+// show up.
+var accentSuffix = map[string]string{
+	"vec": "→", "hat": "^", "dot": "′", "ddot": "″",
+}
+
 // spacingCommands produce no visible output of their own.
 var spacingCommands = map[string]bool{
 	"left": true, "right": true, ",": true, "!": true, ";": true,
@@ -134,6 +156,18 @@ func writeMacro(out *strings.Builder, runes []rune, i int) int {
 		a, next := readGroupOrChar(runes, skipSpace(runes, j))
 		out.WriteString("√(" + ToUnicode(a) + ")")
 		return next
+	case "bar", "overline":
+		// Physics' other standard notation for an average -- angle
+		// brackets -- doubles as the safe stand-in for the overline mark.
+		a, next := readGroupOrChar(runes, skipSpace(runes, j))
+		out.WriteString("⟨" + ToUnicode(a) + "⟩")
+		return next
+	}
+
+	if suffix, ok := accentSuffix[name]; ok {
+		a, next := readGroupOrChar(runes, skipSpace(runes, j))
+		out.WriteString(ToUnicode(a) + suffix)
+		return next
 	}
 
 	if spacingCommands[name] {
@@ -141,6 +175,10 @@ func writeMacro(out *strings.Builder, runes []rune, i int) int {
 	}
 	if r, ok := symbols[name]; ok {
 		out.WriteRune(r)
+		return j
+	}
+	if operatorNames[name] {
+		out.WriteString(name)
 		return j
 	}
 	out.WriteString(string(runes[start:j]))
