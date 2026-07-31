@@ -65,8 +65,7 @@ func fgSGR(id int) string {
 
 // PlaceholderBlock returns the Unicode-placeholder text for a placed
 // image: only the first cell of each row carries the row+column
-// diacritics, the terminal infers the rest from position -- validated
-// against Bubble Tea v2's cell-diffing renderer in cmd/spike-images.
+// diacritics, the terminal infers the rest from position.
 func PlaceholderBlock(id, cols, rows int) string {
 	fg := fgSGR(id)
 	const reset = "\x1b[0m"

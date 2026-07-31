@@ -9,14 +9,11 @@ import (
 var citeRe = regexp.MustCompile(`\[@([A-Za-z0-9_:.-]+)\]`)
 
 // Process scans slides in order for [@key] citations, numbers them by
-// first appearance, rewrites each [@key] into a [n] styled with the
-// theme's link_text color (a real markdown link to a #key anchor -- it
-// never resolves to anywhere, it's just how glamour picks up the color,
-// same trick as everything else in this fork that wants themed styling
-// without hardcoding a color), and appends a References slide listing
-// every cited entry in citation-number order. Citation keys not found in
-// entries are left as literal [@key] text, a visible signal that
-// something's missing rather than a silent drop.
+// first appearance, rewrites each [@key] into a [n] markdown link to a
+// #key anchor (it never resolves anywhere -- it's just how glamour picks
+// up the theme's link_text color without hardcoding one), and appends a
+// References slide listing every cited entry in citation-number order.
+// Citation keys not found in entries are left as literal [@key] text.
 func Process(slides []string, entries map[string]Entry) []string {
 	numbers := make(map[string]int)
 	var order []string

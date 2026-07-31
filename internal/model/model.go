@@ -125,14 +125,10 @@ func (m *Model) leftMargin() int {
 }
 
 // reservedRows is a fixed allowance for whatever text shares the slide
-// with a figure -- title, intro sentence, caption, status bar. A fixed
-// row count holds up better than a fraction of the viewport once the
-// viewport gets small (zooming in shrinks the cell grid), where a
-// percentage-based cut stops leaving enough room for fixed-size text.
-// It's still just a budget: a slide that also stacks a full table (or
-// more) alongside the figure can still run past it -- JoinVertical clips
-// the overflow so the status bar never drifts, but the figure itself may
-// get visually cut off. Splitting such a slide in two is the real fix.
+// with a figure -- title, intro sentence, caption, status bar. Fixed
+// rather than a fraction of the viewport, since a percentage stops
+// leaving enough room for fixed-size text once the viewport gets small
+// (e.g. after zooming in).
 const reservedRows = 10
 
 // mediaSize returns the column/row budget for a single image or LaTeX

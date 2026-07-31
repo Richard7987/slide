@@ -16,7 +16,6 @@ type Entry struct {
 	Fields map[string]string
 }
 
-// ParseFile reads and parses a .bib file.
 func ParseFile(path string) (map[string]Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {

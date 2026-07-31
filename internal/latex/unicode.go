@@ -56,14 +56,10 @@ var operatorNames = map[string]bool{
 	"deg": true, "dim": true, "ker": true, "hom": true,
 }
 
-// accentSuffix covers the physics notation combining marks can't:
-// combining-mark glyphs (arrow/hat/dot above) get silently dropped
-// somewhere in slides' own render pipeline (confirmed: they show up fine
-// printed directly to the terminal, but not once routed through
-// glamour/reflow), so these decorate their argument with an ordinary,
-// non-combining suffix character instead -- never as good-looking as a
-// mark sitting directly above the letter, but guaranteed to actually
-// show up.
+// accentSuffix covers physics vector/derivative notation with a
+// non-combining suffix: combining-mark glyphs get silently dropped
+// somewhere in slides' render pipeline (glamour/reflow), so a mark
+// directly above the letter isn't an option here.
 var accentSuffix = map[string]string{
 	"vec": "→", "hat": "^", "dot": "′", "ddot": "″",
 }

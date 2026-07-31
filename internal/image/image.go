@@ -51,10 +51,10 @@ func sentinel(index int) string {
 // resolved (lookup returns ok) with a sentinel line, plus a caption
 // paragraph if present. References not yet resolved get loading (e.g. a
 // spinner frame) instead, plus the caption if any -- callers only reach
-// here once they already know graphics are supported, so "not ready" only
-// ever means "still decoding", never "never will". The returned
-// placements are indexed exactly as the sentinels appear, for Expand to
-// consume after markdown rendering.
+// here once they already know graphics are supported, so "not ready"
+// only ever means "still decoding". The returned placements are indexed
+// exactly as the sentinels appear, for Expand to consume after markdown
+// rendering.
 func Preprocess(markdown, loading string, lookup func(Ref) (Entry, bool)) (string, []Placement) {
 	var placements []Placement
 	for _, ref := range Parse(markdown) {
