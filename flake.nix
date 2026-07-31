@@ -41,7 +41,7 @@
           version = "dev";
           src = self;
 
-          vendorHash = "sha256-ULF6zzg1fY0xW4eUOC452XlnG3/Pxm+H9thyZO2OtDc=";
+          vendorHash = "sha256-NTO7H0aLudHn83oARrmsEfhz+4cFhHbEXjQno5JmzGM=";
 
           # Los tests que ejecutan procesos externos (tectonic, gs) se
           # excluyen del build sandboxeado de Nix.
