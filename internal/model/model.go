@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,8 +18,11 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+
 	"github.com/charmbracelet/glamour"
 	"github.com/maaslalani/slides/internal/code"
+	"github.com/maaslalani/slides/internal/image"
 	"github.com/maaslalani/slides/internal/meta"
 	"github.com/maaslalani/slides/styles"
 )
@@ -49,20 +53,66 @@ type Model struct {
 	// original slides, it will be displayed on a slide and reset on page change
 	VirtualText string
 	Search      navigation.Search
+
+	images     *image.Cache
+	graphicsOK bool
 }
 
 type fileWatchMsg struct{}
 
+// imagesLoadedMsg carries the Kitty transmit sequences for images that
+// finished decoding since the last time it was requested.
+type imagesLoadedMsg struct{ seqs []string }
+
 var fileInfo os.FileInfo
 
-// Init initializes the model and begins watching the slides file for changes
-// if it exists.
+// Init initializes the model, begins watching the slides file for changes
+// if it exists, and probes whether the terminal supports the Kitty
+// graphics protocol.
 func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{tea.Raw(image.ProbeSeq())}
+	if m.FileName != "" {
+		fileInfo, _ = os.Stat(m.FileName)
+		cmds = append(cmds, fileWatchCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+// imageBaseDir returns the directory image sources are resolved relative
+// to: the slides file's directory, or the working directory for stdin.
+func (m *Model) imageBaseDir() string {
 	if m.FileName == "" {
+		return "."
+	}
+	return filepath.Dir(m.FileName)
+}
+
+// loadImagesCmd decodes and encodes any not-yet-cached images referenced
+// by slide, off the render path. It does file I/O, so it must only run
+// inside a tea.Cmd.
+func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int) tea.Cmd {
+	refs := image.Parse(slide)
+	if images == nil || len(refs) == 0 {
 		return nil
 	}
-	fileInfo, _ = os.Stat(m.FileName)
-	return fileWatchCmd()
+	return func() tea.Msg {
+		var seqs []string
+		for _, ref := range refs {
+			path := filepath.Join(baseDir, ref.Src)
+			if _, ok := images.Get(path, maxCols); ok {
+				continue
+			}
+			_, seq, err := images.Load(path, maxCols)
+			if err != nil || seq == "" {
+				continue
+			}
+			seqs = append(seqs, seq)
+		}
+		if len(seqs) == 0 {
+			return nil
+		}
+		return imagesLoadedMsg{seqs: seqs}
+	}
 }
 
 func fileWatchCmd() tea.Cmd {
@@ -105,6 +155,9 @@ func (m *Model) Load() error {
 	if m.Theme == nil {
 		m.Theme = styles.SelectTheme(metaData.Theme)
 	}
+	if m.images == nil {
+		m.images = image.NewCache()
+	}
 
 	return nil
 }
@@ -115,7 +168,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height)
-		return m, nil
+		if !m.graphicsOK || len(m.Slides) == 0 {
+			return m, nil
+		}
+		return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width())
 
 	case tea.KeyPressMsg:
 		keyPress := msg.String()
@@ -185,7 +241,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}, keyPress)
 			m.buffer = newState.Buffer
 			m.SetPage(newState.Page)
+			if !m.graphicsOK {
+				return m, nil
+			}
+			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width())
 		}
+
+	case uv.KittyGraphicsEvent:
+		if msg.Options.ID == image.ProbeID && string(msg.Payload) == "OK" {
+			m.graphicsOK = true
+			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width())
+		}
+		return m, nil
+
+	case imagesLoadedMsg:
+		return m, tea.Raw(strings.Join(msg.seqs, ""))
 
 	case fileWatchMsg:
 		newFileInfo, err := os.Stat(m.FileName)
@@ -207,6 +277,15 @@ func (m Model) View() tea.View {
 	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(m.viewport.Width()))
 	slide := m.Slides[m.Page]
 	slide = code.HideComments(slide)
+
+	var placements []image.Placement
+	if m.graphicsOK && m.images != nil {
+		baseDir, maxCols := m.imageBaseDir(), m.viewport.Width()
+		slide, placements = image.Preprocess(slide, func(ref image.Ref) (image.Entry, bool) {
+			return m.images.Get(filepath.Join(baseDir, ref.Src), maxCols)
+		})
+	}
+
 	slide, err := r.Render(slide)
 	slide = strings.ReplaceAll(slide, "\t", tabSpaces)
 	slide += m.VirtualText
@@ -214,6 +293,9 @@ func (m Model) View() tea.View {
 		slide = fmt.Sprintf("Error: Could not render markdown! (%v)", err)
 	}
 	slide = styles.Slide.Render(slide)
+	if len(placements) > 0 {
+		slide = image.Expand(slide, placements)
+	}
 
 	var left string
 	if m.Search.Active {

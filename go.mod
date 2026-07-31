@@ -10,6 +10,8 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/ssh v0.0.0-20250826160808-ebfa259c7309
+	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/muesli/coral v1.0.0
 	github.com/muesli/termenv v0.16.0
 	github.com/stretchr/testify v1.11.1
@@ -25,8 +27,6 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/keygen v0.5.4 // indirect
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
-	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/conpty v0.1.1 // indirect
 	github.com/charmbracelet/x/errors v0.0.0-20251110184232-6ab307057ac7 // indirect
