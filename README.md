@@ -1,50 +1,51 @@
 # Slides
 
-Slides in your terminal.
+Slides in your terminal — personal fork of [maaslalani/slides](https://github.com/maaslalani/slides)
+with real LaTeX rendering, real images with captions, and numbered
+bibliography/citations, built for academic and scientific presentations.
 
 <p align="center">
   <img src="./assets/slides-1.gif?raw=true" alt="Slides Presentation" />
 </p>
 
+### What's different from upstream
+
+* **LaTeX math** — `$...$` inline math renders as Unicode text inline with
+  the surrounding prose; `$$...$$` block math renders as a real image via
+  [tectonic](https://tectonic-typesetting.github.io/) + Ghostscript.
+* **Real images** — `![alt](src "caption")` shows the actual image (not
+  just alt text) via the Kitty Graphics Protocol, with the caption
+  rendered below it. Falls back to plain alt text on terminals without
+  Kitty graphics support.
+* **Bibliography & citations** — `[@key]` citations are numbered by order
+  of first appearance and resolved against a `.bib` file, with a
+  References slide generated automatically at the end. See
+  `bibliography` under [Configuration](#configuration).
+* Layout/margin/sizing tuned for presenting on a projector (see
+  `examples/` for a real worked example — not checked in, but built the
+  same way you would build your own).
+
+Everything else — navigation, search, code execution, SSH — works exactly
+like upstream `slides`, documented below.
+
 ### Installation
-[![Homebrew](https://img.shields.io/badge/dynamic/json.svg?url=https://formulae.brew.sh/api/formula/slides.json&query=$.versions.stable&label=homebrew)](https://formulae.brew.sh/formula/slides)
-[![Snapcraft](https://snapcraft.io/slides/badge.svg)](https://snapcraft.io/slides)
-[![AUR](https://img.shields.io/aur/version/slides?label=AUR)](https://aur.archlinux.org/packages/slides)
 
-<details markdown="block">
-<summary>Instructions</summary>
+This fork isn't published to any package manager. Build it from source:
 
-#### MacOS
 ```
-brew install slides
-```
-#### Arch
-```
-yay -S slides
-```
-#### Nixpkgs (unstable)
-```
-nix-env -iA nixpkgs.slides
-```
-#### Any Linux Distro running `snapd`
-```
-sudo snap install slides
-```
-#### Go
-```
-go install github.com/maaslalani/slides@latest
-```
-From source:
-```
-git clone https://github.com/maaslalani/slides.git
+git clone <this repo>
 cd slides
 go install
 ```
 
-You can also download a binary from the [releases](https://github.com/maaslalani/slides/releases) page.
+Or, with the Nix flake in this repo (also brings in `tectonic` and
+`ghostscript`, needed for LaTeX rendering):
 
-</details>
-
+```
+nix build   # ./result/bin/slides
+# or, for a dev shell with go/gopls/tectonic/ghostscript on PATH:
+nix develop
+```
 
 ### Usage
 Create a simple markdown file that contains your slides:
@@ -108,7 +109,7 @@ chmod +x file.md
 
 ````
 
-Checkout the [example slides](https://github.com/maaslalani/slides/tree/main/examples).
+Checkout the [example slides](./examples).
 
 Then, to present, run:
 ```
@@ -201,6 +202,49 @@ for the slides to be pre-processed. You can use `chmod` to add these permissions
 chmod +x file.md
 ```
 
+### LaTeX math
+
+Write ordinary LaTeX math in your markdown:
+
+```
+Inline: $\alpha^2 + \beta \leq \gamma$, rendered as Unicode text.
+
+Block:
+$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$
+```
+
+Inline math (`$...$`) is approximated as Unicode text so it flows with
+the surrounding paragraph. Block math (`$$...$$`) is compiled with
+tectonic and rasterized with Ghostscript into a real image, shown the
+same way as a regular image. If graphics aren't supported by your
+terminal, block math falls back to the same Unicode approximation as
+inline math.
+
+### Images
+
+```
+![A caption for the image](./path/to/image.png "A caption for the image")
+```
+
+Shown as a real image via the Kitty Graphics Protocol (with the caption
+rendered below it) on terminals that support it; falls back to plain alt
+text everywhere else.
+
+### Bibliography & citations
+
+Point `bibliography` (see [Configuration](#configuration)) at a `.bib`
+file, then cite entries anywhere in your slides:
+
+```
+This result matches prior work [@smith2020].
+```
+
+Citations are numbered by order of first appearance across the whole
+presentation; the same key cited again reuses its number. A `References`
+slide listing every cited entry (IEEE-ish numeric style) is appended
+automatically. Keys not found in the `.bib` file are left as literal
+`[@key]` text.
+
 ### Configuration
 
 `slides` allows you to customize your presentation's look and feel with metadata at the top of your `slides.md`.
@@ -213,6 +257,7 @@ theme: ./path/to/theme.json
 author: Gopher
 date: MMMM dd, YYYY
 paging: Slide %d / %d
+bibliography: ./path/to/refs.bib
 ---
 ```
 
@@ -227,6 +272,9 @@ paging: Slide %d / %d
   will be replaced with the current slide number and the second `%d` will be
   replaced with the total slides count. Defaults to `Slide %d / %d`.
   You will need to surround the paging value with quotes if it starts with `%`.
+* `bibliography`: Path to a `.bib` file, relative to the slides file. Enables
+  `[@key]` citations and an auto-generated References slide. Omit to leave
+  the feature off entirely.
 
 #### Date format
 
@@ -265,14 +313,10 @@ to present with `slides` from a computer that doesn't have `slides` installed,
 but does have `ssh`. Or, let your viewers have access to the slides on their
 own computer without needing to download `slides` and the presentation file.
 
-### Alternatives
+### Credits
 
-**Credits**: This project was heavily inspired by [`lookatme`](https://github.com/d0c-s4vage/lookatme).
-
-* [`lookatme`](https://github.com/d0c-s4vage/lookatme)
-* [`sli.dev`](https://sli.dev/)
-* [`sent`](https://tools.suckless.org/sent/)
-* [`presenterm`](https://github.com/mfontanini/presenterm)
+This is a personal fork of [maaslalani/slides](https://github.com/maaslalani/slides),
+which was itself heavily inspired by [`lookatme`](https://github.com/d0c-s4vage/lookatme).
 
 ### Development
 See the [development documentation](./docs/development)
