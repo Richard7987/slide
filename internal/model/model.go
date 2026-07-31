@@ -23,8 +23,10 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/maaslalani/slides/internal/code"
 	"github.com/maaslalani/slides/internal/image"
+	"github.com/maaslalani/slides/internal/latex"
 	"github.com/maaslalani/slides/internal/meta"
 	"github.com/maaslalani/slides/styles"
+	"github.com/muesli/termenv"
 )
 
 var (
@@ -56,6 +58,7 @@ type Model struct {
 
 	images     *image.Cache
 	graphicsOK bool
+	darkBG     bool
 }
 
 type fileWatchMsg struct{}
@@ -87,12 +90,14 @@ func (m *Model) imageBaseDir() string {
 	return filepath.Dir(m.FileName)
 }
 
-// loadImagesCmd decodes and encodes any not-yet-cached images referenced
-// by slide, off the render path. It does file I/O, so it must only run
+// loadImagesCmd decodes and encodes any not-yet-cached images or display
+// math referenced by slide, off the render path. It does file I/O (and,
+// for display math, shells out to tectonic/gs), so it must only run
 // inside a tea.Cmd.
-func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int) tea.Cmd {
+func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int, darkBG bool) tea.Cmd {
 	refs := image.Parse(slide)
-	if images == nil || len(refs) == 0 {
+	display, _ := latex.ParseDisplay(slide)
+	if images == nil || (len(refs) == 0 && len(display) == 0) {
 		return nil
 	}
 	return func() tea.Msg {
@@ -103,6 +108,21 @@ func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols int) tea.
 				continue
 			}
 			_, seq, err := images.Load(path, maxCols)
+			if err != nil || seq == "" {
+				continue
+			}
+			seqs = append(seqs, seq)
+		}
+		for _, b := range display {
+			cachePath := latex.CachePath(b.Source, darkBG)
+			if _, ok := images.Get(cachePath, maxCols); ok {
+				continue
+			}
+			renderedPath, err := latex.Render(b.Source, darkBG)
+			if err != nil {
+				continue
+			}
+			_, seq, err := images.Load(renderedPath, maxCols)
 			if err != nil || seq == "" {
 				continue
 			}
@@ -154,6 +174,11 @@ func (m *Model) Load() error {
 	m.Paging = metaData.Paging
 	if m.Theme == nil {
 		m.Theme = styles.SelectTheme(metaData.Theme)
+		// Computed here, once, before the tea.Program takes over the
+		// terminal: HasDarkBackground does its own OSC 11 query, which
+		// would race with Bubble Tea's input reader if called later from
+		// a tea.Cmd while the program is running.
+		m.darkBG = termenv.HasDarkBackground()
 	}
 	if m.images == nil {
 		m.images = image.NewCache()
@@ -171,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.graphicsOK || len(m.Slides) == 0 {
 			return m, nil
 		}
-		return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width())
+		return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width(), m.darkBG)
 
 	case tea.KeyPressMsg:
 		keyPress := msg.String()
@@ -244,13 +269,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.graphicsOK {
 				return m, nil
 			}
-			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width())
+			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width(), m.darkBG)
 		}
 
 	case uv.KittyGraphicsEvent:
 		if msg.Options.ID == image.ProbeID && string(msg.Payload) == "OK" {
 			m.graphicsOK = true
-			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width())
+			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], m.viewport.Width(), m.darkBG)
 		}
 		return m, nil
 
@@ -286,6 +311,14 @@ func (m Model) View() tea.View {
 		})
 	}
 
+	var latexPlacements []image.Placement
+	if m.images != nil {
+		maxCols := m.viewport.Width()
+		slide, latexPlacements = latex.Preprocess(slide, m.darkBG, m.graphicsOK, func(path string) (image.Entry, bool) {
+			return m.images.Get(path, maxCols)
+		})
+	}
+
 	slide, err := r.Render(slide)
 	slide = strings.ReplaceAll(slide, "\t", tabSpaces)
 	slide += m.VirtualText
@@ -295,6 +328,9 @@ func (m Model) View() tea.View {
 	slide = styles.Slide.Render(slide)
 	if len(placements) > 0 {
 		slide = image.Expand(slide, placements)
+	}
+	if len(latexPlacements) > 0 {
+		slide = latex.Expand(slide, latexPlacements)
 	}
 
 	var left string
