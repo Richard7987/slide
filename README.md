@@ -1,8 +1,9 @@
 # Slides
 
 Slides in your terminal — personal fork of [maaslalani/slides](https://github.com/maaslalani/slides)
-with real LaTeX rendering, real images with captions, and numbered
-bibliography/citations, built for academic and scientific presentations.
+with real LaTeX rendering, real images (including animated GIFs) with
+captions, numbered bibliography/citations, and progressive reveal, built
+for academic and scientific presentations.
 
 <p align="center">
   <img src="./assets/slides-1.gif?raw=true" alt="Slides Presentation" />
@@ -15,12 +16,18 @@ bibliography/citations, built for academic and scientific presentations.
   [tectonic](https://tectonic-typesetting.github.io/) + Ghostscript.
 * **Real images** — `![alt](src "caption")` shows the actual image (not
   just alt text) via the Kitty Graphics Protocol, with the caption
-  rendered below it. Falls back to plain alt text on terminals without
-  Kitty graphics support.
+  rendered below it, including animated GIFs playing back for real. Falls
+  back to plain alt text on terminals without Kitty graphics support.
 * **Bibliography & citations** — `[@key]` citations are numbered by order
   of first appearance and resolved against a `.bib` file, with a
   References slide generated automatically at the end. See
   `bibliography` under [Configuration](#configuration).
+* **Progressive reveal** — `<!-- pause -->` splits a slide into steps
+  revealed one keypress at a time.
+* **Plots from executed code** — any image file a `ctrl+e` code block
+  saves (a Julia/Python/R plot, ...) is shown below its output; Julia
+  specifically gets ANSI-colored UnicodePlots and a headless GR/Plots.jl
+  backend for free.
 * Layout/margin/sizing tuned for presenting on a projector (see
   `examples/` for a real worked example — not checked in, but built the
   same way you would build your own).
@@ -39,7 +46,8 @@ go install
 ```
 
 Or, with the Nix flake in this repo (also brings in `tectonic` and
-`ghostscript`, needed for LaTeX rendering):
+`ghostscript` for LaTeX rendering, and `julia-bin` for the Julia code
+execution extras):
 
 ```
 nix build   # ./result/bin/slides
@@ -171,6 +179,39 @@ on the screen.
 
 Press <kbd>ctrl+e</kbd> on a slide with a code block to execute it and display the result.
 
+Execution runs in the background, so a slow first run (Julia compiling a
+plotting library, for example) doesn't freeze the presentation — a spinner
+shows while it's working. If the code saves an image file (a plot,
+typically), it's shown below the text output, the same way a regular
+image would be.
+
+Julia gets three extras, all automatic, no configuration needed:
+
+* [UnicodePlots.jl](https://github.com/JuliaPlots/UnicodePlots.jl) draws
+  straight into the code output, in color, sized to fit the slide.
+* [GR.jl](https://github.com/jheinen/GR.jl) / [Plots.jl](https://docs.juliaplots.org)
+  with the GR backend never tries to open a window — `GKSwstype` is set
+  for you.
+* [CairoMakie](https://docs.makie.org/stable/) (or anything else that
+  just `save()`s a PNG) works out of the box. GLMakie and other
+  GPU/window-backed backends aren't supported — there's no display to
+  hand them.
+
+### Progressive reveal
+
+Split a slide into steps, revealed one at a time, with an HTML comment on
+its own line:
+
+```
+- always visible
+<!-- pause -->
+- appears on the next keypress
+```
+
+The same keys that page forward/back (space, `j`/`k`, arrows, ...) reveal
+or retract one step first, before moving to the next slide. Jumping
+(`3j`, `5G`, `gg`) always lands on the target slide fully revealed.
+
 ### Pre-processing
 
 You can add a code block with three tildes (`~`) and write a command to run
@@ -228,7 +269,8 @@ inline math.
 
 Shown as a real image via the Kitty Graphics Protocol (with the caption
 rendered below it) on terminals that support it; falls back to plain alt
-text everywhere else.
+text everywhere else. A `.gif` with more than one frame plays back for
+real, looping, entirely on the terminal's side.
 
 ### Bibliography & citations
 
