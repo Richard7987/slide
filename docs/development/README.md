@@ -5,7 +5,7 @@ Make changes, and test them by running:
 make
 ```
 
-This will run `go run main.go examples/slides.md`, you can then ensure
+This will run `go run main.go examples/basics/slides.md`, you can then ensure
 everything still works.
 
 If you're adding a feature that requires a specific piece of markdown, you can
@@ -18,7 +18,7 @@ make test
 
 ### Breaking Changes
 Most changes should be entirely backwards compatible.
-Ensure that `slides examples/slides.md` still works.
+Ensure that `slides examples/basics/slides.md` still works.
 
 ### Codebase
 Initialization (command-line interface, defaults) happens in [`cmd/root.go`](../../cmd/root.go).

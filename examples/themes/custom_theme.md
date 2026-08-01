@@ -1,5 +1,5 @@
 ---
-theme: ./examples/theme.json
+theme: ./examples/themes/theme.json
 ---
 
 # Slides

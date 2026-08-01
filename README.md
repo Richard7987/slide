@@ -58,7 +58,7 @@ run a code block, `y` to yank one, `gg`/`G` to jump to the first/last
 slide. `slides` also reads from `stdin` and reloads live on file changes.
 
 Frontmatter (`theme`, `author`, `date`, `paging`, `bibliography`) is
-optional — see [examples/metadata.md](./examples/metadata.md).
+optional — see [examples/basics/metadata.md](./examples/basics/metadata.md).
 
 See [examples/](./examples) for every feature above in a working
 presentation: LaTeX, images, GIFs, bibliography, reveal, Julia plots, and

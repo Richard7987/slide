@@ -48,7 +48,7 @@ of the command above because the command will disregard stdin.
 You can use this to import snippets of code from other files:
 
 ~~~xargs cat
-examples/import.md
+examples/preprocessing/import.md
 ~~~
 
 ---

@@ -1,5 +1,5 @@
 make:
-	go run main.go examples/slides.md
+	go run main.go examples/basics/slides.md
 
 test:
 	go test ./... -short
