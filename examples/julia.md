@@ -47,3 +47,20 @@ ax = Axis(fig[1, 1], title = "x²")
 lines!(ax, 1:100, x -> x^2)
 save("fig.png", fig)
 ```
+
+---
+
+### An animated GIF from code
+
+A saved `.gif` is displayed the same way any other executed-code image
+is -- and if it has more than one frame, it plays back in a loop just
+like a `.gif` referenced directly in markdown.
+
+```julia
+using Plots
+gr()
+anim = @animate for i in 1:40
+    plot(1:100, x -> sin(x / 10 + i / 4), ylim=(-1.2, 1.2), legend=false)
+end
+gif(anim, "wave.gif", fps=20)
+```

@@ -553,7 +553,13 @@ func (m Model) renderSlide(md string, includeVirtualText bool) string {
 	slide, err := r.Render(slide)
 	slide = strings.ReplaceAll(slide, "\t", tabSpaces)
 	if includeVirtualText {
-		slide += m.VirtualText
+		if m.VirtualText != "" {
+			// Centered the same way images are (via their own PadLeft),
+			// so text-only output -- UnicodePlots' terminal-drawn charts,
+			// in particular -- lines up with the image-based plots
+			// instead of hugging the left edge.
+			slide += lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, m.VirtualText)
+		}
 		if m.executing {
 			slide += "\n" + spin + " ejecutando…"
 		}
