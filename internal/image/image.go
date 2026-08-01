@@ -43,7 +43,12 @@ const sentinelClose = ""
 
 var sentinelRe = regexp.MustCompile(sentinelOpen + `(\d+)` + sentinelClose)
 
-func sentinel(index int) string {
+// Sentinel returns the marker line Preprocess/Expand use, in the Private
+// Use Area, to stand in for an image at position index -- exported so
+// callers that build their own placements outside of Preprocess (e.g.
+// images produced by executing a code block) can inject the same markers
+// and still resolve them through Expand.
+func Sentinel(index int) string {
 	return fmt.Sprintf("%s%d%s", sentinelOpen, index, sentinelClose)
 }
 
@@ -67,7 +72,7 @@ func Preprocess(markdown, loading string, lookup func(Ref) (Entry, bool)) (strin
 			markdown = strings.Replace(markdown, ref.Raw, fallback, 1)
 			continue
 		}
-		replacement := sentinel(len(placements))
+		replacement := Sentinel(len(placements))
 		if ref.Caption != "" {
 			replacement += "\n\n*" + ref.Caption + "*"
 		}

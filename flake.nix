@@ -27,6 +27,9 @@
             ghostscript
             imagemagick
 
+            # ejecución de código en las slides: Ctrl+E
+            julia-bin
+
             # comodidad
             git
           ];

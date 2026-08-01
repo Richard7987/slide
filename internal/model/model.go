@@ -68,6 +68,15 @@ type Model struct {
 	// step is the current slide's reveal progress, an index into
 	// reveal.Steps(current slide).
 	step int
+
+	// executing is true while a ctrl+e code execution is in flight.
+	executing bool
+	// execDirs are the temporary directories the current slide's last
+	// ctrl+e execution ran in, owned by Model until the page changes.
+	execDirs []string
+	// execImages are the image files (plots, etc.) that execution left
+	// behind, in display order.
+	execImages []string
 }
 
 // nextKeys/prevKeys are the single-keystroke navigation keys (as opposed to
@@ -163,6 +172,49 @@ func (m *Model) mediaSize() (maxCols, maxRows int) {
 	return contentWidth, maxRows
 }
 
+// execMediaSize is the column/row budget for a code execution's plot: half
+// of mediaSize's row budget, so the code's stdout still has room next to
+// the image it produced.
+func (m *Model) execMediaSize() (maxCols, maxRows int) {
+	maxCols, maxRows = m.mediaSize()
+	maxRows /= 2
+	if maxRows < 2 {
+		maxRows = 2
+	}
+	return maxCols, maxRows
+}
+
+// loadPathSeq loads path into images if it isn't cached yet, returning its
+// Kitty transmit sequence. ok is false both on failure and when the entry
+// was already cached (nothing new to send).
+func loadPathSeq(images *image.Cache, path string, maxCols, maxRows int) (seq string, ok bool) {
+	_, seq, err := images.Load(path, maxCols, maxRows)
+	if err != nil || seq == "" {
+		return "", false
+	}
+	return seq, true
+}
+
+// loadPathsCmd decodes and transmits any of paths not already cached. It
+// does file I/O, so it must only run inside a tea.Cmd.
+func loadPathsCmd(images *image.Cache, paths []string, maxCols, maxRows int) tea.Cmd {
+	if images == nil || len(paths) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		var seqs []string
+		for _, path := range paths {
+			if seq, ok := loadPathSeq(images, path, maxCols, maxRows); ok {
+				seqs = append(seqs, seq)
+			}
+		}
+		if len(seqs) == 0 {
+			return nil
+		}
+		return imagesLoadedMsg{seqs: seqs}
+	}
+}
+
 // loadImagesCmd decodes and encodes any not-yet-cached images or display
 // math referenced by slide, off the render path. It does file I/O (and,
 // for display math, shells out to tectonic/gs), so it must only run
@@ -177,34 +229,66 @@ func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols, maxRows 
 		var seqs []string
 		for _, ref := range refs {
 			path := filepath.Join(baseDir, ref.Src)
-			if _, ok := images.Get(path, maxCols, maxRows); ok {
-				continue
+			if seq, ok := loadPathSeq(images, path, maxCols, maxRows); ok {
+				seqs = append(seqs, seq)
 			}
-			_, seq, err := images.Load(path, maxCols, maxRows)
-			if err != nil || seq == "" {
-				continue
-			}
-			seqs = append(seqs, seq)
 		}
 		for _, b := range display {
-			cachePath := latex.CachePath(b.Source, darkBG)
-			if _, ok := images.Get(cachePath, maxCols, maxRows); ok {
-				continue
-			}
 			renderedPath, err := latex.Render(b.Source, darkBG)
 			if err != nil {
 				continue
 			}
-			_, seq, err := images.Load(renderedPath, maxCols, maxRows)
-			if err != nil || seq == "" {
-				continue
+			if seq, ok := loadPathSeq(images, renderedPath, maxCols, maxRows); ok {
+				seqs = append(seqs, seq)
 			}
-			seqs = append(seqs, seq)
 		}
 		if len(seqs) == 0 {
 			return nil
 		}
 		return imagesLoadedMsg{seqs: seqs}
+	}
+}
+
+// codeExecutedMsg carries the result of an async ctrl+e code execution.
+// page pins it to the slide it was launched from, so a slide change while
+// execution is still in flight doesn't apply a stale result.
+type codeExecutedMsg struct {
+	page   int
+	text   string
+	dirs   []string
+	images []string
+}
+
+// executeCodeCmd runs blocks (potentially slow: Julia's first run compiles
+// its dependencies) off the render path, in its own goroutine managed by
+// bubbletea.
+func executeCodeCmd(page int, blocks []code.Block) tea.Cmd {
+	return func() tea.Msg {
+		var outs []string
+		var dirs []string
+		var images []string
+		for _, block := range blocks {
+			res := code.Execute(block)
+			outs = append(outs, res.Out)
+			if res.WorkDir != "" {
+				dirs = append(dirs, res.WorkDir)
+			}
+			images = append(images, res.Images...)
+		}
+		return codeExecutedMsg{page: page, text: strings.Join(outs, "\n"), dirs: dirs, images: images}
+	}
+}
+
+// juliaEnv tunes Julia's runtime for headless, non-interactive execution:
+// GKSwstype=100 keeps GR.jl/Plots.jl's GR backend from trying to open a
+// window it can't (it would otherwise hang waiting for a display), and
+// COLUMNS/LINES give UnicodePlots.jl a real canvas size to draw into --
+// without a TTY, Julia's own displaysize() falls back to a fixed 80x24.
+func juliaEnv(maxCols, maxRows int) map[string]string {
+	return map[string]string{
+		"GKSwstype": "100",
+		"COLUMNS":   strconv.Itoa(maxCols),
+		"LINES":     strconv.Itoa(maxRows),
 	}
 }
 
@@ -314,19 +398,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Go to next occurrence
 			m.Search.Execute(&m)
 		case "ctrl+e":
-			// Run code blocks
+			// Run code blocks. Execution happens off the render path
+			// (codeExecutedMsg/executeCodeCmd below): some languages
+			// (Julia, first run) take long enough to compile that running
+			// them inline here would freeze the whole presentation.
 			blocks, err := code.Parse(m.Slides[m.Page])
 			if err != nil {
 				// We couldn't parse the code block on the screen
 				m.VirtualText = "\n" + err.Error()
 				return m, nil
 			}
-			var outs []string
-			for _, block := range blocks {
-				res := code.Execute(block)
-				outs = append(outs, res.Out)
+			maxCols, maxRows := m.mediaSize()
+			for i := range blocks {
+				if blocks[i].Language == code.Julia {
+					blocks[i].Env = juliaEnv(maxCols, maxRows)
+				}
 			}
-			m.VirtualText = strings.Join(outs, "\n")
+			for _, d := range m.execDirs {
+				os.RemoveAll(d)
+			}
+			m.execDirs = nil
+			m.execImages = nil
+			m.VirtualText = ""
+			m.executing = true
+			return m, executeCodeCmd(m.Page, blocks)
 		case "y":
 			blocks, err := code.Parse(m.Slides[m.Page])
 			if err != nil {
@@ -387,6 +482,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case imagesLoadedMsg:
 		return m, tea.Raw(strings.Join(msg.seqs, ""))
 
+	case codeExecutedMsg:
+		if msg.page != m.Page {
+			// The user navigated away while this execution was still
+			// running; its output belongs to a slide that's no longer
+			// current, so just clean up instead of displaying it.
+			for _, d := range msg.dirs {
+				os.RemoveAll(d)
+			}
+			return m, nil
+		}
+		m.executing = false
+		m.VirtualText = msg.text
+		m.execDirs = msg.dirs
+		m.execImages = msg.images
+		if !m.graphicsOK || len(msg.images) == 0 {
+			return m, nil
+		}
+		maxCols, maxRows := m.execMediaSize()
+		return m, loadPathsCmd(m.images, msg.images, maxCols, maxRows)
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -439,6 +554,21 @@ func (m Model) renderSlide(md string, includeVirtualText bool) string {
 	slide = strings.ReplaceAll(slide, "\t", tabSpaces)
 	if includeVirtualText {
 		slide += m.VirtualText
+		if m.executing {
+			slide += "\n" + spin + " ejecutando…"
+		}
+		if m.images != nil && len(m.execImages) > 0 {
+			execCols, execRows := m.execMediaSize()
+			for _, path := range m.execImages {
+				if entry, ok := m.images.Get(path, execCols, execRows); ok {
+					idx := len(placements)
+					slide += "\n" + image.Sentinel(idx)
+					placements = append(placements, image.Placement{Entry: entry})
+				} else {
+					slide += "\n" + spin + " generando gráfico…"
+				}
+			}
+		}
 	}
 	if err != nil {
 		slide = fmt.Sprintf("Error: Could not render markdown! (%v)", err)
@@ -577,6 +707,12 @@ func (m *Model) SetPage(page int) {
 		return
 	}
 
+	for _, d := range m.execDirs {
+		os.RemoveAll(d)
+	}
+	m.execDirs = nil
+	m.execImages = nil
+	m.executing = false
 	m.VirtualText = ""
 	m.Page = page
 }

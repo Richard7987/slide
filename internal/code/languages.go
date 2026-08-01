@@ -100,7 +100,10 @@ var Languages = map[string]Language{
 	},
 	Julia: {
 		Extension: "jl",
-		Commands:  cmds{{"julia", "<file>"}},
+		// --color=yes: Julia turns ANSI color off by default when stdout
+		// isn't a TTY (always true here, since output is captured), which
+		// would otherwise flatten UnicodePlots.jl output to plain text.
+		Commands: cmds{{"julia", "--color=yes", "<file>"}},
 	},
 	Cpp: {
 		Extension: "cpp",
