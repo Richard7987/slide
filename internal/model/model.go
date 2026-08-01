@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,12 +22,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 	"github.com/maaslalani/slides/internal/bib"
 	"github.com/maaslalani/slides/internal/code"
 	"github.com/maaslalani/slides/internal/image"
 	"github.com/maaslalani/slides/internal/latex"
 	"github.com/maaslalani/slides/internal/meta"
+	"github.com/maaslalani/slides/internal/reveal"
 	"github.com/maaslalani/slides/styles"
 	"github.com/muesli/termenv"
 )
@@ -62,6 +65,23 @@ type Model struct {
 	graphicsOK bool
 	darkBG     bool
 	spinner    spinner.Model
+	// step is the current slide's reveal progress, an index into
+	// reveal.Steps(current slide).
+	step int
+}
+
+// nextKeys/prevKeys are the single-keystroke navigation keys (as opposed to
+// a numeric buffer or the "g"/"G" jump keys) -- pressing one of these is
+// what advances/retracts a reveal step before it pages, mirroring
+// navigation.Navigate's own key sets.
+var (
+	nextKeys = map[string]bool{" ": true, "down": true, "j": true, "right": true, "l": true, "enter": true, "n": true, "pgdown": true}
+	prevKeys = map[string]bool{"up": true, "k": true, "left": true, "h": true, "p": true, "pgup": true, "N": true}
+)
+
+func bufferIsNumeric(buffer string) bool {
+	_, err := strconv.Atoi(buffer)
+	return err == nil
 }
 
 type fileWatchMsg struct{}
@@ -319,13 +339,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		default:
+			oldBuffer := m.buffer
 			newState := navigation.Navigate(navigation.State{
 				Buffer:      m.buffer,
 				Page:        m.Page,
 				TotalSlides: len(m.Slides),
 			}, keyPress)
 			m.buffer = newState.Buffer
-			m.SetPage(newState.Page)
+
+			lastStep := len(reveal.Steps(m.Slides[m.Page])) - 1
+			switch {
+			case nextKeys[keyPress] && !bufferIsNumeric(oldBuffer) && m.step < lastStep:
+				// Reveal the next step of the current slide instead of
+				// paging forward.
+				m.step++
+			case prevKeys[keyPress] && !bufferIsNumeric(oldBuffer) && m.step > 0:
+				// Retract the current slide's own reveal before leaving it.
+				m.step--
+			case newState.Page != m.Page:
+				m.SetPage(newState.Page)
+				if prevKeys[keyPress] && !bufferIsNumeric(oldBuffer) {
+					// Arriving on a previous slide via a single "previous"
+					// keystroke shows it fully revealed, matching how it
+					// looked when it was last on screen; any jump (3j, 5G,
+					// gg) always lands at step zero.
+					m.step = len(reveal.Steps(m.Slides[m.Page])) - 1
+				} else {
+					m.step = 0
+				}
+			}
+
 			if !m.graphicsOK {
 				return m, nil
 			}
@@ -363,13 +406,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the current slide in the presentation and the status bar which
-// contains the author, date, and pagination information.
-func (m Model) View() tea.View {
+// renderSlide runs one slide's markdown (or reveal step) through the full
+// render pipeline: image/LaTeX preprocessing, glamour, expansion of the
+// resulting placeholders, and the left margin. includeVirtualText controls
+// whether code-execution output is appended -- View's full-height
+// measurement pass leaves it out, since it's ephemeral and not part of the
+// slide's own content.
+func (m Model) renderSlide(md string, includeVirtualText bool) string {
 	contentWidth, _ := m.contentSize()
 	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(contentWidth))
-	slide := m.Slides[m.Page]
-	slide = code.HideComments(slide)
+	slide := code.HideComments(md)
 
 	maxCols, maxRows := m.mediaSize()
 	spin := m.spinner.View()
@@ -391,7 +437,9 @@ func (m Model) View() tea.View {
 
 	slide, err := r.Render(slide)
 	slide = strings.ReplaceAll(slide, "\t", tabSpaces)
-	slide += m.VirtualText
+	if includeVirtualText {
+		slide += m.VirtualText
+	}
 	if err != nil {
 		slide = fmt.Sprintf("Error: Could not render markdown! (%v)", err)
 	}
@@ -409,6 +457,31 @@ func (m Model) View() tea.View {
 			lines[i] = pad + lines[i]
 		}
 		slide = strings.Join(lines, "\n")
+	}
+	return slide
+}
+
+// View renders the current slide in the presentation and the status bar which
+// contains the author, date, and pagination information.
+func (m Model) View() tea.View {
+	steps := reveal.Steps(m.Slides[m.Page])
+	step := m.step
+	if step > len(steps)-1 {
+		step = len(steps) - 1
+	}
+	if step < 0 {
+		step = 0
+	}
+
+	slide := m.renderSlide(steps[step], true)
+	if len(steps) > 1 {
+		// Pad the current (possibly partial) step to the height of the
+		// slide's final, fully revealed step, so JoinVertical's centering
+		// doesn't shift already-visible lines as more steps are revealed.
+		full := m.renderSlide(steps[len(steps)-1], false)
+		if diff := lipgloss.Height(full) - lipgloss.Height(slide); diff > 0 {
+			slide += strings.Repeat("\n", diff)
+		}
 	}
 
 	var left string
