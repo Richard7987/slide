@@ -6,7 +6,10 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 // cellWidthOverHeight approximates a terminal cell's pixel aspect ratio
@@ -61,18 +64,33 @@ func (c *Cache) Load(path string, maxCols, maxRows int) (entry Entry, transmitSe
 		return e, "", nil
 	}
 
-	f, err := os.Open(path)
-	if err != nil {
-		return Entry{}, "", err
-	}
-	defer f.Close()
+	var (
+		frames []stdimage.Image
+		delays []time.Duration
+		bounds stdimage.Rectangle
+	)
 
-	img, _, err := stdimage.Decode(f)
-	if err != nil {
-		return Entry{}, "", err
+	if strings.EqualFold(filepath.Ext(path), ".gif") {
+		frames, delays, err = decodeGIFFrames(path)
+		if err != nil {
+			return Entry{}, "", err
+		}
 	}
+	if len(frames) == 0 {
+		f, err := os.Open(path)
+		if err != nil {
+			return Entry{}, "", err
+		}
+		img, _, err := stdimage.Decode(f)
+		f.Close()
+		if err != nil {
+			return Entry{}, "", err
+		}
+		frames = []stdimage.Image{img}
+	}
+	bounds = frames[0].Bounds()
 
-	cols, rows := fitSize(img.Bounds(), maxCols, maxRows)
+	cols, rows := fitSize(bounds, maxCols, maxRows)
 	padLeft := (maxCols - cols) / 2
 	if padLeft < 0 {
 		padLeft = 0
@@ -85,7 +103,15 @@ func (c *Cache) Load(path string, maxCols, maxRows int) (entry Entry, transmitSe
 	c.entries[cacheKey{path, maxCols, maxRows}] = e
 	c.mu.Unlock()
 
-	seq, err := TransmitSeq(img, id, cols, rows)
+	// A GIF with only one real frame (common: a still image saved with a
+	// .gif extension) takes the plain, single-frame path -- no point
+	// paying for animation control codes that would never fire.
+	var seq string
+	if len(frames) > 1 {
+		seq, err = TransmitAnimSeq(frames, delays, id, cols, rows)
+	} else {
+		seq, err = TransmitSeq(frames[0], id, cols, rows)
+	}
 	if err != nil {
 		return Entry{}, "", err
 	}

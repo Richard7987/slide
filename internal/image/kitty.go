@@ -2,10 +2,12 @@ package image
 
 import (
 	"bytes"
+	"fmt"
 	stdimage "image"
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
 )
 
@@ -48,6 +50,15 @@ func TransmitSeq(img stdimage.Image, id, cols, rows int) (string, error) {
 		Quite:            2,
 	})
 	return buf.String(), err
+}
+
+// DeleteSeq returns the escape sequence that frees an image and all its
+// frames/placements (id, uppercase D value = also free the pixel data, not
+// just the placements) from the terminal's memory -- needed for animated
+// images once they scroll off screen, since the terminal keeps decoding
+// and redrawing their frames for as long as their placement exists.
+func DeleteSeq(id int) string {
+	return ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", id), "q=2")
 }
 
 // fgSGR encodes id into a foreground color escape, replicating
