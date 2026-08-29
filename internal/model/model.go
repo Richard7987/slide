@@ -394,6 +394,21 @@ func centerLines(s string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// resolveThemeRef makes a relative `theme:` path in the frontmatter
+// resolve against the presentation file's directory (as bibliography and
+// images already do), not the process's working directory. Builtin
+// keywords, URLs and absolute paths pass through untouched.
+func (m *Model) resolveThemeRef(ref string) string {
+	switch ref {
+	case "", "ascii", "light", "dark", "notty":
+		return ref
+	}
+	if strings.HasPrefix(ref, "http") || filepath.IsAbs(ref) {
+		return ref
+	}
+	return filepath.Join(m.imageBaseDir(), ref)
+}
+
 func fileWatchCmd() tea.Cmd {
 	return tea.Every(time.Second, func(t time.Time) tea.Msg {
 		return fileWatchMsg{}
@@ -432,7 +447,7 @@ func (m *Model) Load() error {
 	m.Date = metaData.Date
 	m.Paging = metaData.Paging
 	if m.Theme == nil {
-		m.Theme = styles.SelectTheme(metaData.Theme)
+		m.Theme = styles.SelectTheme(m.resolveThemeRef(metaData.Theme))
 		// Computed here, once, before the tea.Program takes over the
 		// terminal: HasDarkBackground does its own OSC 11 query, which
 		// would race with Bubble Tea's input reader if called later from
