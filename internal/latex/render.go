@@ -10,10 +10,12 @@ import (
 	"strings"
 )
 
-// dpi is a fixed rendering resolution; there's no cheap way to query the
-// terminal's real cell pixel size without an extra async round-trip (same
-// simplification internal/image makes for its own sizing).
-const dpi = 300
+// dpi is a fixed rasterization resolution. The PNG is always downscaled to
+// a handful of terminal cells by internal/image, so 200 is visually
+// indistinguishable from 300 on screen while roughly halving Ghostscript's
+// work and the PNG's decode/transmit cost -- the first run-through of a
+// deck with many equations is noticeably quicker.
+const dpi = 200
 
 // preview, not the default box-register backend, is required: standalone's
 // default backend fails to detect an equation* (or \[...\]) as the
@@ -88,6 +90,7 @@ func Render(source string, dark bool) (string, error) {
 	png := filepath.Join(tmp, "out.png")
 	gs := exec.Command("gs",
 		"-dSAFER", "-dBATCH", "-dNOPAUSE", "-dQUIET",
+		"-dTextAlphaBits=4", "-dGraphicsAlphaBits=4",
 		"-sDEVICE=pngalpha", fmt.Sprintf("-r%d", dpi),
 		"-sOutputFile="+png, pdf,
 	)

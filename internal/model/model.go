@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -153,19 +154,44 @@ func (m *Model) leftMargin() int {
 	return margin
 }
 
-// reservedRows is a fixed allowance for whatever text shares the slide
-// with a figure -- title, intro sentence, caption, status bar. Fixed
-// rather than a fraction of the viewport, since a percentage stops
-// leaving enough room for fixed-size text once the viewport gets small
-// (e.g. after zooming in).
-const reservedRows = 10
-
-// mediaSize returns the column/row budget for a single image or LaTeX
-// block: images can use the entire content width, while their row budget
-// leaves reservedRows for whatever else is on the slide.
+// mediaSize returns the column/row budget for one media item on the
+// current slide. See mediaBudget.
 func (m *Model) mediaSize() (maxCols, maxRows int) {
+	slide := ""
+	if m.Page >= 0 && m.Page < len(m.Slides) {
+		slide = m.Slides[m.Page]
+	}
+	return m.mediaBudget(slide)
+}
+
+// mediaBudget splits the slide's usable height across every media item it
+// carries -- each ![](…) image and each $$…$$ block is a real graphic --
+// so several stacked figures/equations all fit inside the viewport
+// instead of the last one being clipped off the bottom. It is recomputed
+// on every resize (WindowSizeMsg), so the budget tracks Kitty's
+// font-size / zoom changes live.
+func (m *Model) mediaBudget(slide string) (maxCols, maxRows int) {
 	contentWidth, contentHeight := m.contentSize()
-	maxRows = contentHeight - reservedRows
+
+	n := len(image.Parse(slide))
+	if blocks, _ := latex.ParseDisplay(slide); len(blocks) > 0 {
+		n += len(blocks)
+	}
+	if n < 1 {
+		n = 1
+	}
+
+	// Fixed allowance for text sharing the slide (title, intro line,
+	// status bar) plus, per media item, its caption and a blank line of
+	// separation. Fixed rather than a fraction of the viewport, so it
+	// still leaves room for fixed-size text once the viewport gets small
+	// after zooming in.
+	reserved := 6 + 2*n
+	budget := contentHeight - reserved
+	if budget < 3*n {
+		budget = 3 * n
+	}
+	maxRows = budget / n
 	if maxRows < 3 {
 		maxRows = 3
 	}
@@ -233,12 +259,26 @@ func loadImagesCmd(images *image.Cache, baseDir, slide string, maxCols, maxRows 
 				seqs = append(seqs, seq)
 			}
 		}
-		for _, b := range display {
-			renderedPath, err := latex.Render(b.Source, darkBG)
-			if err != nil {
+		// Rasterize this slide's $$…$$ blocks concurrently -- tectonic's
+		// cold start dominates, so a slide with two or three equations
+		// would otherwise stall on them one after another.
+		rendered := make([]string, len(display))
+		var wg sync.WaitGroup
+		for i, b := range display {
+			wg.Add(1)
+			go func(i int, src string) {
+				defer wg.Done()
+				if p, err := latex.Render(src, darkBG); err == nil {
+					rendered[i] = p
+				}
+			}(i, b.Source)
+		}
+		wg.Wait()
+		for _, p := range rendered {
+			if p == "" {
 				continue
 			}
-			if seq, ok := loadPathSeq(images, renderedPath, maxCols, maxRows); ok {
+			if seq, ok := loadPathSeq(images, p, maxCols, maxRows); ok {
 				seqs = append(seqs, seq)
 			}
 		}
@@ -346,6 +386,13 @@ func (m *Model) Load() error {
 			m.Slides = bib.Process(m.Slides, entries)
 		}
 	}
+
+	// Pre-render every $$…$$ block in the deck, in parallel, in the
+	// background: navigating to a slide with equations then costs a cache
+	// hit instead of tectonic's cold start one block at a time. A copy of
+	// the slice is passed so a concurrent file-watch reload can't race the
+	// warmer.
+	go latex.Warm(append([]string(nil), m.Slides...), m.darkBG)
 
 	return nil
 }
