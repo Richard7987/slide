@@ -66,7 +66,13 @@ type Model struct {
 	images     *image.Cache
 	graphicsOK bool
 	darkBG     bool
-	spinner    spinner.Model
+	// mediaRows is the per-item row budget for the current slide's images
+	// and $$ blocks. Recomputed (from the measured height of the slide's
+	// prose) whenever the page or the viewport size changes, so figures
+	// shrink to leave room for whatever text shares the slide and follow
+	// Kitty's font-size / zoom live.
+	mediaRows int
+	spinner   spinner.Model
 	// step is the current slide's reveal progress, an index into
 	// reveal.Steps(current slide).
 	step int
@@ -156,22 +162,38 @@ func (m *Model) leftMargin() int {
 }
 
 // mediaSize returns the column/row budget for one media item on the
-// current slide. See mediaBudget.
+// current slide: the full content width, and the per-item row budget
+// computed by refreshMediaBudget (with a conservative fallback for the
+// first frame, before any WindowSizeMsg has arrived).
 func (m *Model) mediaSize() (maxCols, maxRows int) {
-	slide := ""
-	if m.Page >= 0 && m.Page < len(m.Slides) {
-		slide = m.Slides[m.Page]
+	contentWidth, contentHeight := m.contentSize()
+	maxRows = m.mediaRows
+	if maxRows < 3 {
+		maxRows = contentHeight - 10
+		if maxRows < 3 {
+			maxRows = 3
+		}
 	}
-	return m.mediaBudget(slide)
+	return contentWidth, maxRows
 }
 
-// mediaBudget splits the slide's usable height across every media item it
-// carries -- each ![](…) image and each $$…$$ block is a real graphic --
-// so several stacked figures/equations all fit inside the viewport
-// instead of the last one being clipped off the bottom. It is recomputed
-// on every resize (WindowSizeMsg), so the budget tracks Kitty's
-// font-size / zoom changes live.
-func (m *Model) mediaBudget(slide string) (maxCols, maxRows int) {
+// refreshMediaBudget recomputes mediaRows for the current slide. Call it
+// whenever the page or viewport size changes, before mediaSize is read.
+func (m *Model) refreshMediaBudget() {
+	if m.Page < 0 || m.Page >= len(m.Slides) {
+		return
+	}
+	m.mediaRows = m.computeMediaBudget(m.Slides[m.Page])
+}
+
+// computeMediaBudget returns how many rows one image or $$ block on slide
+// may use. It renders the slide's prose alone -- every image and display
+// block removed -- to measure how many rows the surrounding text really
+// occupies at the current width, then splits what's left evenly across
+// the media items. This is what keeps a figure from overrunning the
+// caption or paragraph beneath it, and it re-measures on every resize so
+// the fit tracks Kitty's zoom.
+func (m *Model) computeMediaBudget(slide string) int {
 	contentWidth, contentHeight := m.contentSize()
 
 	n := len(image.Parse(slide))
@@ -179,24 +201,40 @@ func (m *Model) mediaBudget(slide string) (maxCols, maxRows int) {
 		n += len(blocks)
 	}
 	if n < 1 {
-		n = 1
+		return contentHeight
 	}
 
-	// Fixed allowance for text sharing the slide (title, intro line,
-	// status bar) plus, per media item, its caption and a blank line of
-	// separation. Fixed rather than a fraction of the viewport, so it
-	// still leaves room for fixed-size text once the viewport gets small
-	// after zooming in.
-	reserved := 6 + 2*n
+	textRows := 3
+	if r, err := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(contentWidth)); err == nil {
+		if out, rerr := r.Render(code.HideComments(stripMedia(slide))); rerr == nil {
+			textRows = lipgloss.Height(strings.TrimRight(out, "\n"))
+		}
+	}
+
+	// styles.Slide's Padding(1) (2 rows) + the status bar and its padding
+	// (~3 rows) + one row of separation per media item + a small cushion so
+	// a slightly-off prose measurement never spills past the last row.
+	reserved := textRows + 7 + n
 	budget := contentHeight - reserved
 	if budget < 3*n {
 		budget = 3 * n
 	}
-	maxRows = budget / n
-	if maxRows < 3 {
-		maxRows = 3
+	return budget / n
+}
+
+// stripMedia removes a slide's images and $$ blocks but keeps each
+// image's caption as a line of text, so computeMediaBudget measures the
+// prose that will actually surround the figures.
+func stripMedia(slide string) string {
+	_, slide = latex.ParseDisplay(slide) // display blocks -> equal-length spaces
+	for _, ref := range image.Parse(slide) {
+		repl := ""
+		if ref.Caption != "" {
+			repl = "*" + ref.Caption + "*"
+		}
+		slide = strings.Replace(slide, ref.Raw, repl, 1)
 	}
-	return contentWidth, maxRows
+	return slide
 }
 
 // execMediaSize is the column/row budget for a code execution's plot: half
@@ -427,6 +465,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(msg.Height)
+		m.refreshMediaBudget()
 		if !m.graphicsOK || len(m.Slides) == 0 {
 			return m, nil
 		}
@@ -535,6 +574,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			m.refreshMediaBudget()
 			if !m.graphicsOK {
 				return m, nil
 			}
@@ -545,6 +585,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uv.KittyGraphicsEvent:
 		if msg.Options.ID == image.ProbeID && string(msg.Payload) == "OK" {
 			m.graphicsOK = true
+			m.refreshMediaBudget()
 			maxCols, maxRows := m.mediaSize()
 			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], maxCols, maxRows, m.darkBG)
 		}
@@ -586,6 +627,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.Page >= len(m.Slides) {
 				m.Page = len(m.Slides) - 1
 			}
+			m.refreshMediaBudget()
 		}
 		return m, fileWatchCmd()
 	}
