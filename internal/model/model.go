@@ -25,6 +25,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/x/ansi/kitty"
 	"github.com/maaslalani/slides/internal/bib"
 	"github.com/maaslalani/slides/internal/code"
 	"github.com/maaslalani/slides/internal/image"
@@ -332,6 +333,29 @@ func juliaEnv(maxCols, maxRows int) map[string]string {
 	}
 }
 
+// centerMarker on its own line makes renderSlide horizontally center the
+// slide's text.
+const centerMarker = "<!-- center -->"
+
+// centerLines horizontally centers every non-blank text line of s within
+// width. Lines carrying a Kitty graphics placeholder are left untouched --
+// their own PadLeft already centers the image.
+func centerLines(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if strings.ContainsRune(line, kitty.Placeholder) {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		w := lipgloss.Width(trimmed)
+		if w == 0 || w >= width {
+			continue
+		}
+		lines[i] = strings.Repeat(" ", (width-w)/2) + trimmed
+	}
+	return strings.Join(lines, "\n")
+}
+
 func fileWatchCmd() tea.Cmd {
 	return tea.Every(time.Second, func(t time.Time) tea.Msg {
 		return fileWatchMsg{}
@@ -579,6 +603,15 @@ func (m Model) renderSlide(md string, includeVirtualText bool) string {
 	r, _ := glamour.NewTermRenderer(m.Theme, glamour.WithWordWrap(contentWidth))
 	slide := code.HideComments(md)
 
+	// A slide carrying `<!-- center -->` on its own line has every text
+	// line horizontally centered after rendering (images keep their own
+	// centering). Strip the marker before glamour sees it.
+	centered := strings.Contains(slide, centerMarker)
+	if centered {
+		slide = strings.ReplaceAll(slide, centerMarker+"\n", "")
+		slide = strings.ReplaceAll(slide, centerMarker, "")
+	}
+
 	maxCols, maxRows := m.mediaSize()
 	spin := m.spinner.View()
 
@@ -632,6 +665,9 @@ func (m Model) renderSlide(md string, includeVirtualText bool) string {
 	}
 	if len(latexPlacements) > 0 {
 		slide = latex.Expand(slide, latexPlacements)
+	}
+	if centered {
+		slide = centerLines(slide, contentWidth)
 	}
 	if margin := m.leftMargin(); margin > 0 {
 		pad := strings.Repeat(" ", margin)
