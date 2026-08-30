@@ -16,11 +16,11 @@ func testEntries() map[string]Entry {
 	}
 }
 
-func TestProcess_NumbersByFirstAppearance(t *testing.T) {
+func TestProcess_NumbersAlphabetically(t *testing.T) {
 	slides := []string{
 		"intro slide, no citations",
-		"see [@doe2019] and also [@smith2020]",
-		"cited again: [@doe2019]",
+		"see [@smith2020] and also [@doe2019]", // Smith cited first
+		"cited again: [@smith2020]",
 	}
 	out := Process(slides, testEntries())
 
@@ -30,22 +30,24 @@ func TestProcess_NumbersByFirstAppearance(t *testing.T) {
 	if out[0] != slides[0] {
 		t.Errorf("slide 0 should be untouched, got %q", out[0])
 	}
-	if !strings.Contains(out[1], "[[1](#doe2019)]") || !strings.Contains(out[1], "[[2](#smith2020)]") {
-		t.Errorf("slide 1 = %q, want [[1]] (doe2019, first seen) and [[2]] (smith2020)", out[1])
+	// Doe sorts before Smith, so Doe is [1] and Smith is [2] even though
+	// Smith is cited first.
+	if !strings.Contains(out[1], "[[2](#smith2020)]") || !strings.Contains(out[1], "[[1](#doe2019)]") {
+		t.Errorf("slide 1 = %q, want smith=[[2]] doe=[[1]] (alphabetical)", out[1])
 	}
-	if !strings.Contains(out[2], "[[1](#doe2019)]") {
-		t.Errorf("slide 2 = %q, want repeated citation to reuse [[1]]", out[2])
+	if !strings.Contains(out[2], "[[2](#smith2020)]") {
+		t.Errorf("slide 2 = %q, want repeated citation to reuse [[2]]", out[2])
 	}
 
 	refs := out[len(out)-1]
 	if !strings.HasPrefix(refs, "## References") {
 		t.Errorf("references slide should start with heading, got %q", refs)
 	}
-	if !strings.Contains(refs, "[1] J. Doe") {
-		t.Errorf("references slide missing entry 1 (doe2019): %q", refs)
+	if !strings.Contains(refs, "[1] J. Doe") || !strings.Contains(refs, "[2] J. Smith") {
+		t.Errorf("references not numbered alphabetically: %q", refs)
 	}
-	if !strings.Contains(refs, "[2] J. Smith") {
-		t.Errorf("references slide missing entry 2 (smith2020): %q", refs)
+	if strings.Index(refs, "[1] J. Doe") > strings.Index(refs, "[2] J. Smith") {
+		t.Errorf("references slide should list [1] before [2]: %q", refs)
 	}
 }
 
