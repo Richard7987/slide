@@ -56,7 +56,7 @@ func Process(slides []string, entries map[string]Entry) []string {
 			return fmt.Sprintf("[[%d](#%s)]", n, key)
 		})
 	}
-	out = append(out, referencesSlide(order, entries))
+	out = append(out, referencesSlides(order, entries)...)
 	return out
 }
 
@@ -78,12 +78,32 @@ func sortKey(e Entry) string {
 	return name + "\x00" + f["year"] + "\x00" + strings.ToLower(f["title"])
 }
 
-func referencesSlide(order []string, entries map[string]Entry) string {
-	var b strings.Builder
-	b.WriteString("## References\n\n")
-	for i, key := range order {
-		b.WriteString(FormatReference(i+1, entries[key]))
-		b.WriteString("\n\n")
+// refsPerSlide caps how many entries land on one References slide. A
+// terminal slide can't scroll, so a long bibliography is broken across
+// several slides rather than running off the bottom.
+const refsPerSlide = 6
+
+// referencesSlides renders the cited entries (already in final numbered
+// order) as one or more "## References" slides of at most refsPerSlide
+// entries each.
+func referencesSlides(order []string, entries map[string]Entry) []string {
+	var slides []string
+	for start := 0; start < len(order); start += refsPerSlide {
+		end := start + refsPerSlide
+		if end > len(order) {
+			end = len(order)
+		}
+		var b strings.Builder
+		if start == 0 {
+			b.WriteString("## References\n\n")
+		} else {
+			b.WriteString("## References (cont.)\n\n")
+		}
+		for i := start; i < end; i++ {
+			b.WriteString(FormatReference(i+1, entries[order[i]]))
+			b.WriteString("\n\n")
+		}
+		slides = append(slides, strings.TrimRight(b.String(), "\n"))
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return slides
 }
