@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +86,10 @@ type Model struct {
 	// execImages are the image files (plots, etc.) that execution left
 	// behind, in display order.
 	execImages []string
+	// execCache holds an auto-run (<!-- run -->) slide's last execution
+	// result, keyed by page, so revisiting the slide restores its output
+	// instead of re-running.
+	execCache map[int]codeExecutedMsg
 }
 
 // nextKeys/prevKeys are the single-keystroke navigation keys (as opposed to
@@ -394,6 +399,45 @@ func centerLines(s string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// codeFenceRe matches a whole fenced code block (``` or ~~~), language
+// tag optional. Used to hide the source on an auto-run slide.
+var codeFenceRe = regexp.MustCompile("(?s)(```|~~~)[a-zA-Z0-9]*\n.*?\n(```|~~~)[ \t]*\n?")
+
+// autoRun handles a slide that carries code.RunMarker (<!-- run -->): its
+// code blocks execute automatically on arrival and only their output is
+// shown. It restores a cached result for an already-visited slide, or
+// returns a command to execute the blocks for a fresh one (nil if the
+// slide has no marker or no parseable block).
+func (m *Model) autoRun() tea.Cmd {
+	if m.Page < 0 || m.Page >= len(m.Slides) {
+		return nil
+	}
+	slide := m.Slides[m.Page]
+	if !strings.Contains(slide, code.RunMarker) {
+		return nil
+	}
+	if cached, ok := m.execCache[m.Page]; ok {
+		m.executing = false
+		m.VirtualText = cached.text
+		m.execImages = cached.images
+		return nil
+	}
+	blocks, err := code.Parse(slide)
+	if err != nil {
+		return nil
+	}
+	maxCols, maxRows := m.mediaSize()
+	for i := range blocks {
+		if blocks[i].Language == code.Julia {
+			blocks[i].Env = juliaEnv(maxCols, maxRows)
+		}
+	}
+	m.VirtualText = ""
+	m.execImages = nil
+	m.executing = true
+	return executeCodeCmd(m.Page, blocks)
+}
+
 // resolveThemeRef makes a relative `theme:` path in the frontmatter
 // resolve against the presentation file's directory (as bibliography and
 // images already do), not the process's working directory. Builtin
@@ -470,6 +514,14 @@ func (m *Model) Load() error {
 	// the slice is passed so a concurrent file-watch reload can't race the
 	// warmer.
 	go latex.Warm(append([]string(nil), m.Slides...), m.darkBG)
+
+	// Prime the interpreter for any auto-run (<!-- run -->) slide so the
+	// first one to execute doesn't stall on a cold start.
+	go code.Warm(append([]string(nil), m.Slides...))
+
+	if m.execCache == nil {
+		m.execCache = make(map[int]codeExecutedMsg)
+	}
 
 	return nil
 }
@@ -557,6 +609,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+c", "q":
+			for _, r := range m.execCache {
+				for _, d := range r.dirs {
+					os.RemoveAll(d)
+				}
+			}
 			return m, tea.Quit
 		default:
 			oldBuffer := m.buffer
@@ -590,11 +647,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.refreshMediaBudget()
+			autoCmd := m.autoRun()
 			if !m.graphicsOK {
-				return m, nil
+				return m, autoCmd
 			}
 			maxCols, maxRows := m.mediaSize()
-			return m, loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], maxCols, maxRows, m.darkBG)
+			imgCmd := loadImagesCmd(m.images, m.imageBaseDir(), m.Slides[m.Page], maxCols, maxRows, m.darkBG)
+			if autoCmd != nil {
+				return m, tea.Batch(imgCmd, autoCmd)
+			}
+			return m, imgCmd
 		}
 
 	case uv.KittyGraphicsEvent:
@@ -623,6 +685,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.VirtualText = msg.text
 		m.execDirs = msg.dirs
 		m.execImages = msg.images
+		if strings.Contains(m.Slides[msg.page], code.RunMarker) {
+			if m.execCache == nil {
+				m.execCache = make(map[int]codeExecutedMsg)
+			}
+			m.execCache[msg.page] = msg
+		}
 		if !m.graphicsOK || len(msg.images) == 0 {
 			return m, nil
 		}
@@ -667,6 +735,15 @@ func (m Model) renderSlide(md string, includeVirtualText bool) string {
 	if centered {
 		slide = strings.ReplaceAll(slide, centerMarker+"\n", "")
 		slide = strings.ReplaceAll(slide, centerMarker, "")
+	}
+
+	// An auto-run slide (<!-- run -->) hides its source: strip the marker
+	// and every fenced code block, leaving only prose. The output is
+	// appended below via includeVirtualText.
+	if strings.Contains(slide, code.RunMarker) {
+		slide = strings.ReplaceAll(slide, code.RunMarker+"\n", "")
+		slide = strings.ReplaceAll(slide, code.RunMarker, "")
+		slide = codeFenceRe.ReplaceAllString(slide, "")
 	}
 
 	maxCols, maxRows := m.mediaSize()

@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+// RunMarker on a slide, on its own line, makes slides execute that
+// slide's code blocks automatically when the slide is shown and hide the
+// source, displaying only the output.
+const RunMarker = "<!-- run -->"
+
 // Block represents a code block.
 type Block struct {
 	Code     string
